@@ -146,6 +146,44 @@ class TestParamSnapshotCoherence:
         assert np.array_equal(svc.get_output("add2", "out").data, truth)
 
 
+class TestDemandIsStatic:
+    def test_both_switch_branches_execute(self, registry):
+        """Demand is the graph's ancestor closure, not a value-dependent one:
+        a Switch does NOT make its unselected branch free. Pinned because the
+        opposite is the intuitive assumption, and acting on it (building a
+        graph with an expensive unused branch) would silently cost real time.
+
+        Making this lazy would mean the engine understanding a node's
+        semantics, which is a genuine design question — not an oversight.
+        """
+        from cvflow.core.graph import Graph
+        from cvflow.plugins import builtin_registry
+
+        full, _ = builtin_registry()
+        g = Graph()
+        g.add_node(registry.get("test.source"), node_id="src")
+        # Distinct params on purpose: identical branches would share a
+        # fingerprint and the second would report CACHED, which proves cache
+        # dedup rather than the demand behaviour under test here.
+        g.add_node(registry.get("test.add"), node_id="branch_a",
+                   params={"amount": 10})
+        g.add_node(registry.get("test.add"), node_id="branch_b",
+                   params={"amount": 42})
+        g.add_node(full.get("cvflow.util.switch"), node_id="pick",
+                   params={"use_b": False})
+        g.connect("src", "out", "branch_a", "image")
+        g.connect("src", "out", "branch_b", "image")
+        g.connect("branch_a", "out", "pick", "a")
+        g.connect("branch_b", "out", "pick", "b")
+
+        report = make_service(g).run(observed=["pick"])
+        assert report.nodes["branch_a"].status is NodeStatus.OK
+        assert report.nodes["branch_b"].status is NodeStatus.OK, (
+            "the unselected branch is expected to run — if this now passes as "
+            "SKIPPED, demand became value-dependent and the Switch doc is stale")
+        assert AddNode.calls == 2
+
+
 class TestErrorIsolation:
     def test_failure_blocks_descendants_not_siblings(self, registry):
         from cvflow.core.graph import Graph

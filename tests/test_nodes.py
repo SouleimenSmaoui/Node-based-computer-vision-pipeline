@@ -385,6 +385,245 @@ class TestFilterContours:
         assert out.ref_size == source.ref_size
 
 
+class TestSplitMerge:
+    def test_split_then_merge_round_trips(self, full_registry):
+        src = shapes_image(64)
+        planes = run_node(full_registry.get("cvflow.color.split_channels").node_class,
+                          inputs={"image": src})
+        assert all(planes[c].space is ColorSpace.GRAY for c in ("c1", "c2", "c3"))
+
+        merged = run_node(full_registry.get("cvflow.color.merge_channels").node_class,
+                          inputs={"c1": planes["c1"], "c2": planes["c2"],
+                                  "c3": planes["c3"]},
+                          params={"space": "BGR"})["out"]
+        assert merged.space is ColorSpace.BGR
+        assert np.array_equal(merged.data, src.data)
+
+    def test_split_rejects_single_channel(self, full_registry):
+        spec = full_registry.get("cvflow.color.split_channels")
+        with pytest.raises(NodeExecutionError):
+            run_node(spec.node_class, inputs={"image": checker_image(32)})
+
+    def test_merge_rejects_mismatched_sizes(self, full_registry):
+        spec = full_registry.get("cvflow.color.merge_channels")
+        with pytest.raises(NodeExecutionError):
+            run_node(spec.node_class,
+                     inputs={"c1": checker_image(32), "c2": checker_image(32),
+                             "c3": checker_image(16)})
+
+
+class TestWarps:
+    def test_affine_identity_leaves_pixels_alone(self, full_registry):
+        spec = full_registry.get("cvflow.geometry.warp_affine")
+        src = shapes_image(64)
+        out = run_node(spec.node_class, inputs={"image": src},
+                       params={"angle": 0.0, "scale": 1.0})["out"]
+        assert np.array_equal(out.data, src.data)
+
+    def test_affine_360_degrees_is_near_identity(self, full_registry):
+        spec = full_registry.get("cvflow.geometry.warp_affine")
+        src = shapes_image(64)
+        out = run_node(spec.node_class, inputs={"image": src},
+                       params={"angle": 360.0})["out"]
+        assert np.abs(out.data.astype(int) - src.data.astype(int)).mean() < 1.0
+
+    def test_affine_keeps_a_mask_binary(self, full_registry):
+        """Same rule as Resize: interpolating a mask would invent grey values,
+        so BINARY input is resampled nearest."""
+        spec = full_registry.get("cvflow.geometry.warp_affine")
+        out = run_node(spec.node_class,
+                       inputs={"image": checker_image(64, cell=1, space="BINARY")},
+                       params={"angle": 33.0, "interp": "cubic"})["out"]
+        assert out.space is ColorSpace.BINARY
+        assert set(np.unique(out.data)) <= {0, 255}
+
+    def test_perspective_rectifies_to_the_output_rect(self, full_registry):
+        spec = full_registry.get("cvflow.geometry.perspective")
+        src = shapes_image(128)
+        out = run_node(spec.node_class, inputs={"image": src},
+                       params={"top_left": (10, 10), "top_right": (110, 20),
+                               "bottom_right": (120, 120), "bottom_left": (5, 100),
+                               "width": 64, "height": 48})["out"]
+        assert (out.width, out.height) == (64, 48)
+
+    def test_perspective_identity_corners_preserve_the_image(self, full_registry):
+        spec = full_registry.get("cvflow.geometry.perspective")
+        src = shapes_image(64)
+        out = run_node(spec.node_class, inputs={"image": src},
+                       params={"top_left": (0, 0), "top_right": (63, 0),
+                               "bottom_right": (63, 63), "bottom_left": (0, 63)})["out"]
+        assert np.abs(out.data.astype(int) - src.data.astype(int)).mean() < 1.0
+
+    def test_perspective_duplicate_corners_is_a_config_error(self, full_registry):
+        spec = full_registry.get("cvflow.geometry.perspective")
+        issues = spec.node_class().validate(
+            {"top_left": (0, 0), "top_right": (0, 0), "bottom_right": (10, 10),
+             "bottom_left": (0, 10), "width": 0, "height": 0, "interp": "linear"})
+        assert issues and issues[0].level == "error"
+
+
+class TestDrawPack:
+    def _contours(self, full_registry):
+        gray = run_node(full_registry.get("cvflow.color.to_gray").node_class,
+                        inputs={"image": shapes_image(128)})["out"]
+        binary = run_node(full_registry.get("cvflow.threshold.threshold").node_class,
+                          inputs={"image": gray}, params={"method": "otsu"})["out"]
+        return run_node(full_registry.get("cvflow.analysis.find_contours").node_class,
+                        inputs={"image": binary})["contours"]
+
+    def test_draw_boxes_marks_the_image(self, full_registry):
+        spec = full_registry.get("cvflow.draw.draw_boxes")
+        src = shapes_image(128)
+        out = run_node(spec.node_class,
+                       inputs={"image": src,
+                               "contours": self._contours(full_registry)},
+                       params={"color": (0, 255, 0), "thickness": 2})["out"]
+        assert out.space is ColorSpace.BGR
+        assert not np.array_equal(out.data, src.data)
+
+    def test_draw_boxes_promotes_a_gray_base(self, full_registry):
+        """Annotation must work directly on a mask or edge map, not only BGR."""
+        spec = full_registry.get("cvflow.draw.draw_boxes")
+        gray = run_node(full_registry.get("cvflow.color.to_gray").node_class,
+                        inputs={"image": shapes_image(128)})["out"]
+        out = run_node(spec.node_class,
+                       inputs={"image": gray,
+                               "contours": self._contours(full_registry)})["out"]
+        assert out.space is ColorSpace.BGR and out.data.ndim == 3
+
+    def test_draw_text_uses_the_port_over_the_param(self, full_registry):
+        spec = full_registry.get("cvflow.draw.draw_text")
+        src = shapes_image(128)
+        from_param = run_node(spec.node_class, inputs={"image": src},
+                              params={"text": "PARAM"})["out"]
+        from_port = run_node(spec.node_class,
+                             inputs={"image": src, "text_in": "PORT"},
+                             params={"text": "PARAM"})["out"]
+        assert not np.array_equal(from_param.data, from_port.data)
+
+    def test_draw_text_empty_caption_is_a_clean_passthrough(self, full_registry):
+        spec = full_registry.get("cvflow.draw.draw_text")
+        src = shapes_image(64)
+        out = run_node(spec.node_class, inputs={"image": src},
+                       params={"text": ""})["out"]
+        assert np.array_equal(out.data, src.data)
+
+    def test_overlay_mask_only_tints_inside_the_mask(self, full_registry):
+        from cvflow.core.types.image import ImageBuffer
+
+        spec = full_registry.get("cvflow.draw.overlay_mask")
+        src = shapes_image(64)
+        mask = np.zeros((64, 64), np.uint8)
+        mask[:32, :] = 255  # top half only
+        out = run_node(spec.node_class,
+                       inputs={"image": src, "mask": ImageBuffer(mask, "BINARY")},
+                       params={"opacity": 1.0, "color": (0, 0, 255)})["out"]
+        assert not np.array_equal(out.data[:32], src.data[:32])
+        assert np.array_equal(out.data[32:], src.data[32:])
+
+    def test_overlay_mask_size_mismatch_is_an_error(self, full_registry):
+        spec = full_registry.get("cvflow.draw.overlay_mask")
+        with pytest.raises(NodeExecutionError):
+            run_node(spec.node_class,
+                     inputs={"image": shapes_image(64),
+                             "mask": checker_image(32, space="BINARY")})
+
+    def test_blend_difference_of_identical_images_is_black(self, full_registry):
+        spec = full_registry.get("cvflow.draw.blend")
+        src = shapes_image(64)
+        out = run_node(spec.node_class, inputs={"base": src, "top": src},
+                       params={"mode": "difference", "opacity": 1.0})["out"]
+        assert out.data.max() == 0
+
+    def test_blend_mix_endpoints(self, full_registry):
+        spec = full_registry.get("cvflow.draw.blend")
+        a, b = shapes_image(64), checker_image(64, space="GRAY")
+        at_zero = run_node(spec.node_class, inputs={"base": a, "top": b},
+                           params={"mode": "mix", "opacity": 0.0})["out"]
+        assert np.array_equal(at_zero.data, a.data)
+
+    def test_blend_size_mismatch_is_an_error(self, full_registry):
+        spec = full_registry.get("cvflow.draw.blend")
+        with pytest.raises(NodeExecutionError):
+            run_node(spec.node_class, inputs={"base": shapes_image(64),
+                                              "top": shapes_image(32)})
+
+
+class TestUtilPack:
+    def test_switch_selects_the_named_input(self, full_registry):
+        spec = full_registry.get("cvflow.util.switch")
+        a, b = shapes_image(32), checker_image(32)
+        assert run_node(spec.node_class, inputs={"a": a, "b": b},
+                        params={"use_b": False})["out"] is a
+        assert run_node(spec.node_class, inputs={"a": a, "b": b},
+                        params={"use_b": True})["out"] is b
+
+    def test_switch_reports_an_unconnected_selection(self, full_registry):
+        spec = full_registry.get("cvflow.util.switch")
+        with pytest.raises(NodeExecutionError):
+            run_node(spec.node_class, inputs={"a": shapes_image(32)},
+                     params={"use_b": True})
+
+    def test_math_subtract_saturates_instead_of_wrapping(self, full_registry):
+        """The classic uint8 trap: 0 - 20 must be 0, not 236."""
+        from cvflow.core.types.image import ImageBuffer
+
+        spec = full_registry.get("cvflow.util.math_op")
+        dark = ImageBuffer(np.zeros((16, 16), np.uint8), "GRAY")
+        out = run_node(spec.node_class, inputs={"a": dark},
+                       params={"op": "subtract", "constant": 20.0})["out"]
+        assert out.data.max() == 0
+
+    def test_math_negative_constant_flips_the_operation(self, full_registry):
+        from cvflow.core.types.image import ImageBuffer
+
+        spec = full_registry.get("cvflow.util.math_op")
+        mid = ImageBuffer(np.full((16, 16), 100, np.uint8), "GRAY")
+        plus = run_node(spec.node_class, inputs={"a": mid},
+                        params={"op": "add", "constant": -20.0})["out"]
+        assert plus.data[0, 0] == 80
+
+    def test_math_image_to_image_difference(self, full_registry):
+        spec = full_registry.get("cvflow.util.math_op")
+        src = shapes_image(64)
+        out = run_node(spec.node_class, inputs={"a": src, "b": src},
+                       params={"op": "absdiff"})["out"]
+        assert out.data.max() == 0
+
+    def test_math_bitwise_needs_both_inputs(self, full_registry):
+        spec = full_registry.get("cvflow.util.math_op")
+        with pytest.raises(NodeExecutionError):
+            run_node(spec.node_class, inputs={"a": checker_image(32, space="BINARY")},
+                     params={"op": "and"})
+
+    def test_math_bitwise_keeps_masks_binary(self, full_registry):
+        """and/or/xor can only return values already present, so the BINARY
+        label survives — unlike add/subtract, which blend."""
+        spec = full_registry.get("cvflow.util.math_op")
+        mask = checker_image(32, cell=1, space="BINARY")
+        out = run_node(spec.node_class, inputs={"a": mask, "b": mask},
+                       params={"op": "and"})["out"]
+        assert out.space is ColorSpace.BINARY
+        assert set(np.unique(out.data)) <= {0, 255}
+
+    def test_display_text_formats_a_number(self, full_registry):
+        spec = full_registry.get("cvflow.util.display_text")
+        out = run_node(spec.node_class, inputs={"value": 3.14159},
+                       params={"template": "{:.2f} mm"})["out"]
+        assert out == "3.14 mm"
+
+    def test_display_text_reports_a_bad_template(self, full_registry):
+        spec = full_registry.get("cvflow.util.display_text")
+        with pytest.raises(Exception, match="cannot format"):
+            run_node(spec.node_class, inputs={"value": 1.0},
+                     params={"template": "{:.2f} {:.2f}"})
+
+    def test_display_text_without_a_value_returns_the_template(self, full_registry):
+        spec = full_registry.get("cvflow.util.display_text")
+        out = run_node(spec.node_class, params={"template": "no value"})["out"]
+        assert out == "no value"
+
+
 class TestCanny:
     def test_outputs_binary_edge_map(self, full_registry):
         spec = full_registry.get("cvflow.edges.canny")

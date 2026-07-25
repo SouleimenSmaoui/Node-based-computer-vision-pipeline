@@ -106,6 +106,23 @@ class ImageBuffer:
         out.setflags(write=True)
         return out
 
+    def bgr_canvas(self) -> np.ndarray:
+        """A writable 3-channel BGR array to draw on.
+
+        Annotation nodes all need the same thing: colour strokes need three
+        channels, drawing mutates, and outputs are frozen — so this always
+        returns a copy, never a view. Single-channel input is promoted rather
+        than refused, so a mask or an edge map can be annotated directly.
+        """
+        import cv2
+
+        if self.space in (ColorSpace.GRAY, ColorSpace.BINARY):
+            return cv2.cvtColor(self.data, cv2.COLOR_GRAY2BGR)
+        if self.space is ColorSpace.BGR:
+            return self.writable_copy()
+        # HSV/LAB/RGB/BGRA all have a COLOR_<space>2BGR conversion.
+        return cv2.cvtColor(self.data, getattr(cv2, f"COLOR_{self.space.value}2BGR"))
+
     # ---- introspection -------------------------------------------------
     @property
     def nbytes(self) -> int:

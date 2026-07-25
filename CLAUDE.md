@@ -31,12 +31,12 @@ GUI tests run headless: `pytest` includes `tests/test_app_smoke.py`, which sets
 | `cvflow/core/` | graph model, type system, params/ports/node specs | [README](cvflow/core/README.md) |
 | `cvflow/engine/` | fingerprint cache, scheduler/executor, run reports | [README](cvflow/engine/README.md) |
 | `cvflow/sdk/` | **the only import surface for nodes** + testing harness | [README](cvflow/sdk/README.md) |
-| `cvflow/nodes/` | built-in node packs (22 nodes, MVP target ~35) | [README](cvflow/nodes/README.md) |
+| `cvflow/nodes/` | built-in node packs (33 nodes, MVP target ~35) | [README](cvflow/nodes/README.md) |
 | `cvflow/io/` | workflow JSON v1, asset path resolution | [README](cvflow/io/README.md) |
 | `cvflow/plugins/` | node discovery (builtin scan + pip entry points) | [README](cvflow/plugins/README.md) |
 | `cvflow/cli/` | `cvflow` command (run / validate / nodes list) | [README](cvflow/cli/README.md) |
 | `cvflow/app/` | **Phase 1 PySide6 GUI** (bespoke editor, PySide6-only) | [README](cvflow/app/README.md) · docs/05 |
-| `tests/` | 152 tests incl. offscreen GUI smoke + 1080p engine and param-to-pixel gates | [README](tests/README.md) |
+| `tests/` | 183 tests incl. offscreen GUI smoke + 1080p engine and param-to-pixel gates | [README](tests/README.md) |
 | `examples/` | demo workflow + programmatic graph-building reference | [README](examples/README.md) |
 
 ## Hard rules (break these and the architecture rots)

@@ -29,8 +29,18 @@ def run_node(
     if spec is None:
         raise TypeError(f"{node_cls.__name__} is not decorated with @node")
     values = validate_params(spec.params, dict(params or {}))
+    # The engine hands every declared input to the node, using None for ports
+    # with no incoming edge (executor._assemble_inputs). Mirror that here, or a
+    # node with an optional port would see AttributeError under test and None
+    # in production — the harness has to be faithful to be worth anything.
+    supplied = dict(inputs or {})
+    assembled = {decl.name: supplied.pop(decl.name, None) for decl in spec.inputs}
+    if supplied:
+        raise TypeError(
+            f"{node_cls.__name__} has no input port(s) {sorted(supplied)} "
+            f"(declared: {[d.name for d in spec.inputs]})")
     ctx = ExecutionContext(
-        node_id="test", spec=spec, inputs=dict(inputs or {}), params=values,
+        node_id="test", spec=spec, inputs=assembled, params=values,
         resources=resources or Resources(), state=state)
     obj = node_cls()
     obj.setup(ctx)

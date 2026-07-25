@@ -10,7 +10,6 @@ from __future__ import annotations
 import cv2
 
 from cvflow.sdk import (
-    ColorSpace,
     ContoursIn,
     EnumParam,
     ImageIn,
@@ -46,13 +45,7 @@ class DrawContours(Node):
 
     def process(self, ctx) -> None:
         img = ctx.inputs.image
-        if img.space in (ColorSpace.GRAY, ColorSpace.BINARY):
-            canvas = cv2.cvtColor(img.data, cv2.COLOR_GRAY2BGR)
-        elif img.space is ColorSpace.BGR:
-            canvas = img.writable_copy()
-        else:
-            canvas = cv2.cvtColor(img.writable_copy(), getattr(
-                cv2, f"COLOR_{img.space.value}2BGR"))
+        canvas = img.bgr_canvas()
         cnts = ctx.inputs.contours
         if cnts is not None and len(cnts):
             cv2.drawContours(canvas, list(cnts.contours), -1,
