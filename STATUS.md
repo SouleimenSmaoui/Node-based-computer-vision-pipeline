@@ -28,7 +28,7 @@ viewer, dependency highlight, structural undo, CI-qt) is listed under Next steps
 | Core model | `Graph` (cycle + type checks at connect, replace-on-reconnect, listeners), `NodeInstance`, declarative `Node`/`@node`, ports, params (Int/Float/Bool/Enum/String/Path), `NodeRegistry` |
 | Type system | `ImageBuffer` (frozen arrays, BGR-canonical, str or enum spaces), `ColorSpace`, `ContourSet`, port-type checks with auto-coercions (GRAY→BGR replicate, BINARY→GRAY) and reject-with-hint (BGR→GRAY → 'insert "To Gray"') |
 | Engine | `ExecutionService.run()` (blocking), demand closure from observed/armed nodes, BLAKE2b Merkle fingerprints (params + node version + input fps + `external_state` like file mtime), byte-budgeted LRU `OutputCache` with pinning, worker-pool parallel dispatch (workers=0 → inline/deterministic), error isolation (ERROR → descendants BLOCKED, siblings run), side-effect arming, `RunReport`/`NodeMetrics`/EMA |
-| Nodes (11) | **io:** Load Image, Save Image · **color:** To Gray · **filters:** Gaussian Blur, Invert · **edges:** Canny (typed GRAY input + validate low≤high) · **threshold:** Threshold (global/Otsu/adaptive) · **morphology:** Morphology (erode/dilate/open/close/…) · **geometry:** Resize (scale/absolute) · **analysis:** Find Contours (→ ContourSet, min-area filter) · **draw:** Draw Contours |
+| Nodes (20) | **io:** Load Image, Save Image · **color:** To Gray, In Range (→BINARY mask), CLAHE (L-in-LAB for colour) · **filters:** Gaussian Blur, Invert, Median Blur, Box Blur, Bilateral, Unsharp Mask · **edges:** Canny (typed GRAY input + validate low≤high), Sobel, Laplacian (both 8-bit or raw signed float) · **threshold:** Threshold (global/Otsu/adaptive) · **morphology:** Morphology (erode/dilate/open/close/…) · **geometry:** Resize (scale/absolute), Rotate / Flip (lossless) · **analysis:** Find Contours (→ ContourSet, min-area filter) · **draw:** Draw Contours |
 | GUI (`cvflow/app/`) | PySide6 app: dark theme, dockable Palette/Inspector/Viewers/Console-Errors-Profiler; bespoke `QGraphicsView` node editor (drag-connect with live type-check + coercion badges, box-select, Tab quick-add, palette drag-drop, status LEDs); auto-inspector from ParamSpecs (slider/spin/check/combo/path) with 30 ms debounced live re-run; `ExecutionController` (threaded, superseding, run-locked structural edits); `ImageView` (zoom/pan/pixel-probe, channel isolation, range-aware normalize, contour overlay); param/label undo; save/load + autosave-of-UI-viewers. Entry: `cvflow-app` / `python -m cvflow.app`. See [README](cvflow/app/README.md) |
 | SDK | `cvflow.sdk` facade (only legal import for nodes), `cvflow.sdk.testing` (`run_node`, synthetic images) |
 | Persistence | workflow JSON schema v1 (atomic writes, stable ids, graph/ui separation, base_dir for relative assets), permissive load with issues list, strict on unknown types/newer schema |
@@ -103,13 +103,27 @@ These are *intentional*; if you change one, update the relevant doc.
 > regressions only, no CI flake). Caveat: offscreen, so it excludes real
 > compositing/vsync — the CPU path is identical, but re-measure on a real
 > display before declaring the exit criterion met.
+>
+> **Node packs: 11 → 20** (session 4, batch 1). **122 tests** green. While
+> writing them, `GaussianBlur` turned out to carry the identical BINARY-label
+> bug CODE_REVIEW §2.8 found in `Resize` — fixed, and `docs/04 §1` updated with
+> it since that node *is* the reference example every plugin author copies.
 
-1. **Broaden node packs toward the MVP ~35** (docs/08 Phase 1) — 11 done; still
-   want: in-range colour mask, crop-ROI (with pick-in-viewer RectParam), rotate/
-   flip/warp/perspective, median/bilateral/box/unsharp, Sobel/Laplacian, filter-
-   contours + bounding boxes + connected components + Hough + template match,
-   statistics, draw boxes/text/mask-blend, switch/math util, **custom Script node**
-   (editor dialog). Pure SDK work; each needs a `tests/test_nodes.py` test.
+1. **Keep broadening node packs toward ~35** — **20 done** (batch 1, session 4:
+   median/box/bilateral/unsharp, Sobel/Laplacian, In Range, CLAHE, Rotate/Flip).
+   Batch 1 was deliberately the subset needing *no new infrastructure*. The rest
+   is **not** all pure SDK work, and splits by what it needs first — see
+   [nodes/README](cvflow/nodes/README.md):
+   - **Write the missing `ParamSpec` types first** (deviation #5: `RangeParam`,
+     `RectParam`, `PointParam`, `ColorParam`, `CodeParam`). They gate crop-ROI,
+     draw boxes/text, and the custom Script node, and they are shared — the
+     inspector generates widgets for them automatically once
+     `build_param_widget` handles them. Highest leverage of anything remaining.
+   - **Then decide the new data types** (line segments, circles, a detections
+     table) which gate connected components, Hough, template match, bounding
+     boxes, statistics.
+   - **No blockers:** split/merge channels, warp affine, perspective, filter
+     contours, overlay mask, blend, `util/` switch/math/display-text.
 2. **Editor + viewer depth** (docs/05 §2.2, §2.4): dependency highlight on
    selection, node bypass (`D`), backdrops/reroutes, heat overlay,
    thumbnails-on-node, **structural undo** (`QUndoCommand`s for

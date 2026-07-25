@@ -68,6 +68,244 @@ class TestToGray:
         assert out["out"].space is ColorSpace.GRAY
 
 
+class TestNewFilters:
+    """median / box / bilateral / unsharp (session 4)."""
+
+    def test_median_removes_salt_and_pepper(self, full_registry):
+        spec = full_registry.get("cvflow.filters.median_blur")
+        rng = np.random.default_rng(3)
+        flat = np.full((64, 64), 128, np.uint8)
+        noisy = flat.copy()
+        ys, xs = rng.integers(0, 64, 60), rng.integers(0, 64, 60)
+        noisy[ys, xs] = 255  # sparse impulses — median's home turf
+        from cvflow.core.types.image import ImageBuffer
+
+        out = run_node(spec.node_class,
+                       inputs={"image": ImageBuffer(noisy, "GRAY")},
+                       params={"kernel": 5})["out"]
+        assert np.abs(out.data.astype(int) - 128).max() < \
+            np.abs(noisy.astype(int) - 128).max()
+
+    def test_median_keeps_a_mask_binary(self, full_registry):
+        """A rank filter only emits values that were already present, so unlike
+        the averaging filters it can honestly keep the BINARY label."""
+        spec = full_registry.get("cvflow.filters.median_blur")
+        out = run_node(spec.node_class,
+                       inputs={"image": checker_image(64, cell=1, space="BINARY")},
+                       params={"kernel": 3})["out"]
+        assert out.space is ColorSpace.BINARY
+        assert set(np.unique(out.data)) <= {0, 255}
+
+    @pytest.mark.parametrize("type_id,params", [
+        ("cvflow.filters.box_blur", {"kernel": 5}),
+        ("cvflow.filters.gaussian_blur", {"kernel": 5}),
+        ("cvflow.filters.bilateral", {"diameter": 9}),
+        ("cvflow.filters.unsharp_mask", {"radius": 5, "amount": 1.0}),
+    ])
+    def test_blending_filters_downgrade_binary_to_gray(self, full_registry,
+                                                       type_id, params):
+        """These all blend neighbours, so the result is no longer {0,255}.
+        Emitting GRAY is the honest option — silently keeping the BINARY label
+        is the bug CODE_REVIEW §2.8 found in Resize."""
+        spec = full_registry.get(type_id)
+        out = run_node(spec.node_class,
+                       inputs={"image": checker_image(64, cell=1, space="BINARY")},
+                       params=params)["out"]
+        assert out.space is ColorSpace.GRAY, f"{type_id} mislabelled its output"
+
+    def test_box_blur_smooths(self, full_registry):
+        spec = full_registry.get("cvflow.filters.box_blur")
+        src = checker_image(64, space="GRAY")
+        out = run_node(spec.node_class, inputs={"image": src},
+                       params={"kernel": 9})["out"]
+        assert float(out.data.std()) < float(src.data.std())
+
+    def test_bilateral_preserves_edges_better_than_box(self, full_registry):
+        """The whole point of the node: at comparable smoothing strength it
+        keeps more edge contrast than a plain mean."""
+        src = shapes_image(128, space="BGR")
+        bilateral = run_node(
+            full_registry.get("cvflow.filters.bilateral").node_class,
+            inputs={"image": src},
+            params={"diameter": 9, "sigma_color": 50.0, "sigma_space": 50.0})["out"]
+        box = run_node(full_registry.get("cvflow.filters.box_blur").node_class,
+                       inputs={"image": src}, params={"kernel": 9})["out"]
+
+        def edge_energy(buf):
+            import cv2
+            gray = cv2.cvtColor(buf.data, cv2.COLOR_BGR2GRAY)
+            return float(np.abs(cv2.Laplacian(gray, cv2.CV_32F)).mean())
+
+        assert edge_energy(bilateral) > edge_energy(box)
+
+    def test_unsharp_amount_zero_is_a_noop(self, full_registry):
+        spec = full_registry.get("cvflow.filters.unsharp_mask")
+        src = shapes_image(64)
+        out = run_node(spec.node_class, inputs={"image": src},
+                       params={"radius": 5, "amount": 0.0})["out"]
+        assert np.array_equal(out.data, src.data)
+
+    def test_unsharp_increases_local_contrast(self, full_registry):
+        spec = full_registry.get("cvflow.filters.unsharp_mask")
+        src = shapes_image(128)
+        out = run_node(spec.node_class, inputs={"image": src},
+                       params={"radius": 5, "amount": 1.5})["out"]
+        assert float(out.data.std()) > float(src.data.std())
+
+
+class TestSobelAndLaplacian:
+    def _gray(self, full_registry, size=128):
+        return run_node(full_registry.get("cvflow.color.to_gray").node_class,
+                        inputs={"image": shapes_image(size)})["out"]
+
+    @pytest.mark.parametrize("type_id", ["cvflow.edges.sobel",
+                                         "cvflow.edges.laplacian"])
+    def test_normalized_output_is_8bit_gray(self, full_registry, type_id):
+        spec = full_registry.get(type_id)
+        out = run_node(spec.node_class,
+                       inputs={"image": self._gray(full_registry)},
+                       params={"normalize": True})["out"]
+        assert out.space is ColorSpace.GRAY
+        assert out.data.dtype == np.uint8
+        assert out.data.max() > 0  # shapes produce gradients
+
+    @pytest.mark.parametrize("type_id", ["cvflow.edges.sobel",
+                                         "cvflow.edges.laplacian"])
+    def test_raw_output_is_float_and_arbitrary_range(self, full_registry, type_id):
+        """Unnormalized derivatives are signed and unbounded; labelling them
+        ARBITRARY is what stops the viewer clipping negatives to black."""
+        from cvflow.core.types.image import ValueRange
+
+        spec = full_registry.get(type_id)
+        out = run_node(spec.node_class,
+                       inputs={"image": self._gray(full_registry)},
+                       params={"normalize": False})["out"]
+        assert out.data.dtype == np.float32
+        assert out.range is ValueRange.ARBITRARY
+
+    def test_sobel_x_and_y_differ_on_an_oriented_edge(self, full_registry):
+        from cvflow.core.types.image import ImageBuffer
+
+        # A purely vertical edge: gx responds, gy should not.
+        arr = np.zeros((64, 64), np.uint8)
+        arr[:, 32:] = 255
+        src = ImageBuffer(arr, "GRAY")
+        spec = full_registry.get("cvflow.edges.sobel")
+        gx = run_node(spec.node_class, inputs={"image": src},
+                      params={"direction": "x", "normalize": False})["out"]
+        gy = run_node(spec.node_class, inputs={"image": src},
+                      params={"direction": "y", "normalize": False})["out"]
+        assert np.abs(gx.data).max() > 0
+        assert np.abs(gy.data).max() == 0
+
+
+class TestInRange:
+    def _hsv_swatch(self):
+        """Left half pure red, right half pure blue, in HSV."""
+        import cv2
+        from cvflow.core.types.image import ImageBuffer
+
+        bgr = np.zeros((32, 64, 3), np.uint8)
+        bgr[:, :32] = (0, 0, 255)    # red
+        bgr[:, 32:] = (255, 0, 0)    # blue
+        return ImageBuffer(cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV), "HSV")
+
+    def test_selects_one_hue_band(self, full_registry):
+        spec = full_registry.get("cvflow.color.in_range")
+        out = run_node(spec.node_class, inputs={"image": self._hsv_swatch()},
+                       params={"low1": 0, "high1": 10, "low2": 100, "high2": 255,
+                               "low3": 100, "high3": 255})["mask"]
+        assert out.space is ColorSpace.BINARY
+        assert set(np.unique(out.data)) <= {0, 255}
+        assert (out.data[:, :32] == 255).all()   # red half selected
+        assert (out.data[:, 32:] == 0).all()     # blue half rejected
+
+    def test_single_channel_uses_only_channel_one(self, full_registry):
+        spec = full_registry.get("cvflow.color.in_range")
+        src = checker_image(32, space="GRAY")  # values are 0 and 255
+        mask = run_node(spec.node_class, inputs={"image": src},
+                        params={"low1": 200, "high1": 255})["mask"]
+        assert np.array_equal(mask.data == 255, src.data == 255)
+
+    def test_inverted_band_is_a_config_error(self, full_registry):
+        spec = full_registry.get("cvflow.color.in_range")
+        issues = spec.node_class().validate(
+            {"low1": 200, "high1": 10, "low2": 0, "high2": 255,
+             "low3": 0, "high3": 255})
+        assert issues and issues[0].level == "error"
+
+
+class TestClahe:
+    def test_boosts_local_contrast_on_gray(self, full_registry):
+        from cvflow.core.types.image import ImageBuffer
+
+        spec = full_registry.get("cvflow.color.clahe")
+        # A low-contrast gradient: global range is small, so CLAHE has room.
+        ramp = np.tile(np.linspace(100, 140, 64, dtype=np.uint8), (64, 1))
+        out = run_node(spec.node_class, inputs={"image": ImageBuffer(ramp, "GRAY")},
+                       params={"clip": 4.0, "tiles": 8})["out"]
+        assert out.space is ColorSpace.GRAY
+        assert float(out.data.std()) > float(ramp.std())
+
+    def test_colour_path_keeps_bgr(self, full_registry):
+        spec = full_registry.get("cvflow.color.clahe")
+        out = run_node(spec.node_class, inputs={"image": shapes_image(64)},
+                       params={"clip": 2.0, "tiles": 8})["out"]
+        assert out.space is ColorSpace.BGR
+        assert out.data.shape == (64, 64, 3)
+
+    def test_rejects_a_space_it_cannot_equalize(self, full_registry):
+        """HSV's channels can't take a per-channel curve without wrecking the
+        colour, so refuse rather than silently mangle it."""
+        import cv2
+        from cvflow.core.types.image import ImageBuffer
+
+        spec = full_registry.get("cvflow.color.clahe")
+        hsv = ImageBuffer(cv2.cvtColor(shapes_image(64).data, cv2.COLOR_BGR2HSV),
+                          "HSV")
+        with pytest.raises(NodeExecutionError):
+            run_node(spec.node_class, inputs={"image": hsv}, params={})
+
+
+class TestRotateFlip:
+    def test_rotation_transposes_dimensions(self, full_registry):
+        spec = full_registry.get("cvflow.geometry.rotate_flip")
+        src = shapes_image(128)
+        out = run_node(spec.node_class, inputs={"image": src},
+                       params={"rotate": "90 cw", "flip": "none"})["out"]
+        assert (out.width, out.height) == (src.height, src.width)
+
+    def test_four_quarter_turns_return_the_original(self, full_registry):
+        spec = full_registry.get("cvflow.geometry.rotate_flip")
+        src = shapes_image(64)
+        buf = src
+        for _ in range(4):
+            buf = run_node(spec.node_class, inputs={"image": buf},
+                           params={"rotate": "90 cw", "flip": "none"})["out"]
+        assert np.array_equal(buf.data, src.data)
+
+    def test_double_flip_is_identity(self, full_registry):
+        spec = full_registry.get("cvflow.geometry.rotate_flip")
+        src = shapes_image(64)
+        once = run_node(spec.node_class, inputs={"image": src},
+                        params={"rotate": "none", "flip": "horizontal"})["out"]
+        twice = run_node(spec.node_class, inputs={"image": once},
+                         params={"rotate": "none", "flip": "horizontal"})["out"]
+        assert not np.array_equal(once.data, src.data)
+        assert np.array_equal(twice.data, src.data)
+
+    def test_no_op_still_returns_a_valid_output(self, full_registry):
+        """Both settings 'none' must not hand the frozen input array straight
+        back out as a new output buffer."""
+        spec = full_registry.get("cvflow.geometry.rotate_flip")
+        src = checker_image(32, space="BINARY")
+        out = run_node(spec.node_class, inputs={"image": src},
+                       params={"rotate": "none", "flip": "none"})["out"]
+        assert np.array_equal(out.data, src.data)
+        assert out.data is not src.data
+        assert out.space is ColorSpace.BINARY  # rearrangement keeps the mask
+
+
 class TestCanny:
     def test_outputs_binary_edge_map(self, full_registry):
         spec = full_registry.get("cvflow.edges.canny")

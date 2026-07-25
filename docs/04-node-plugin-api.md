@@ -34,8 +34,20 @@ class GaussianBlur(Node):
         img = ctx.inputs.image
         blurred = cv2.GaussianBlur(img.data, (ctx.params.kernel,)*2,
                                    ctx.params.sigma)
-        ctx.outputs.out = img.derive(blurred)
+        # Averaging puts values between 0 and 255, so a BINARY input is no
+        # longer a valid mask: emit GRAY rather than mislabel it. `derive`
+        # keeps the input space when space=None.
+        space = ColorSpace.GRAY if img.space is ColorSpace.BINARY else None
+        ctx.outputs.out = img.derive(blurred, space=space)
 ```
+
+> **Respect the space you emit** (added 2026-07-25 after CODE_REVIEW §2.8 found
+> the same defect in `Resize`). `same_space_as=` and `derive()` propagate the
+> input's `ColorSpace` *label*, and `ImageBuffer` validates only channel count
+> and dtype — never a space's **convention**. So an operation that breaks one
+> (BINARY meaning strictly `{0, 255}`) fails silently and propagates downstream.
+> Either constrain the operation to preserve the convention, or emit the space
+> you actually produced.
 
 What the author **did not** write: inspector widgets, value clamping, odd-enforcement UI,
 JSON (de)serialization, undo integration, fingerprint/caching logic, thread handling,

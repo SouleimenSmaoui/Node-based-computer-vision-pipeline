@@ -4,7 +4,15 @@ from __future__ import annotations
 
 import cv2
 
-from cvflow.sdk import FloatParam, ImageIn, ImageOut, IntParam, Node, node
+from cvflow.sdk import (
+    ColorSpace,
+    FloatParam,
+    ImageIn,
+    ImageOut,
+    IntParam,
+    Node,
+    node,
+)
 
 
 @node(
@@ -28,4 +36,8 @@ class GaussianBlur(Node):
         img = ctx.inputs.image
         k = ctx.params.kernel
         blurred = cv2.GaussianBlur(img.data, (k, k), ctx.params.sigma)
-        ctx.outputs.out = img.derive(blurred)
+        # Blending neighbours puts values between 0 and 255, so a BINARY input
+        # is no longer a valid mask. Emit GRAY instead of mislabelling it —
+        # same rule as Resize (CODE_REVIEW §2.8, nodes/README.md).
+        space = ColorSpace.GRAY if img.space is ColorSpace.BINARY else None
+        ctx.outputs.out = img.derive(blurred, space=space)
