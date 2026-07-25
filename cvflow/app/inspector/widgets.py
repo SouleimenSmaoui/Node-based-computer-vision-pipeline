@@ -229,7 +229,7 @@ class _PathWidget(ParamWidget):
     def _browse(self) -> None:
         spec: PathParam = self.spec  # type: ignore[assignment]
         start = self.edit.text() or os.getcwd()
-        flt = spec.filter.replace(" ", " ") or "All files (*)"
+        flt = spec.filter or "All files (*)"
         if spec.mode == "dir":
             path = QtWidgets.QFileDialog.getExistingDirectory(self, spec.label, start)
         elif spec.mode == "save":
@@ -247,17 +247,16 @@ class _PathWidget(ParamWidget):
         self._muted = False
 
 
-_WIDGETS: dict[str, type[ParamWidget]] = {
-    "slider": _IntWidget,      # refined below by spec type
-    "checkbox": _BoolWidget,
-    "dropdown": _EnumWidget,
-    "line_edit": _StringWidget,
-    "path_picker": _PathWidget,
-}
-
-
 def build_param_widget(spec: ParamSpec) -> ParamWidget:
-    """Instantiate the right editor for a parameter spec."""
+    """Instantiate the right editor for a parameter spec.
+
+    Dispatch is by spec *type*, never by ``widget_hint``. A hint-keyed table
+    used to back this up, mapping "slider" to the int editor — so a third-party
+    ParamSpec subclass declaring ``widget_hint="slider"`` without being an
+    ``IntParam`` crashed on ``spec.min``/``spec.step``. An unknown spec now
+    always gets the string editor: degraded, but it renders and edits
+    (CODE_REVIEW §2.7).
+    """
     if isinstance(spec, PathParam):
         return _PathWidget(spec)
     if isinstance(spec, IntParam):
@@ -268,7 +267,4 @@ def build_param_widget(spec: ParamSpec) -> ParamWidget:
         return _BoolWidget(spec)
     if isinstance(spec, EnumParam):
         return _EnumWidget(spec)
-    if isinstance(spec, StringParam):
-        return _StringWidget(spec)
-    cls = _WIDGETS.get(spec.widget_hint, _StringWidget)
-    return cls(spec)
+    return _StringWidget(spec)

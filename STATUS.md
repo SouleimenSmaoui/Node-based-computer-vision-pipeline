@@ -81,20 +81,28 @@ These are *intentional*; if you change one, update the relevant doc.
 > a fresh clone can run the demo. `.gitattributes` pins `eol=lf` so a Windows
 > checkout doesn't rewrite every file. No remote yet — that gates CI (step 7).
 >
-> **CODE_REVIEW §1 is fixed** (2026-07-25, same session): §1.1 params snapshot,
-> §1.2 armed-run publication + re-arm on supersession, §1.3 numeric profiler
-> sort. **87 tests** green (was 80). Every one of the 7 new tests was verified to
-> *fail* against the pre-fix code, so they are real regression guards rather than
-> restatements of current behaviour. §2 items 4–8 are now step 1 below.
+> **CODE_REVIEW §1 and §2.4–2.8 are fixed** (2026-07-25, same session): §1.1
+> params snapshot, §1.2 armed-run publication + re-arm on supersession, §1.3
+> numeric profiler sort, §2.4 stable category colours, §2.5 middle-button pan
+> without synthetic `QMouseEvent`s, §2.6 log handler removed on close, §2.7
+> unknown-spec widget fallback, §2.8 `Resize` keeps BINARY masks binary.
+> **91 tests** green (was 80). Every new test was run against the pre-fix code
+> and confirmed failing, so they are real regression guards. §2.5 is the one
+> fix without a test — it is a mouse-gesture path, and synthesizing the drag is
+> what the fix exists to avoid (related gap: §2.11 below).
+>
+> **Remaining CODE_REVIEW §2, triaged:** §2.9 is step 1 below; §2.2 (armed-run
+> status feedback) and §2.3 (viewer mislabels a stale image under a contours
+> overlay — contours-over-source is useful, the header claiming the contours
+> node is the bug) fold into step 3, editor/viewer depth; §2.1, §2.10, §2.11 are
+> under "Known weak spots"; §2.12 was already these Next steps.
 
-1. **CODE_REVIEW §2 items 4–8** — the small, low-risk cleanups: stable category
-   colours for plugin categories (`hash()` is salted per process, so they change
-   every launch), the deprecated `QMouseEvent` 5-arg constructor in middle-button
-   pan, `QtLogHandler` accumulating one handler per `MainWindow`, the unsafe
-   `_WIDGETS["slider"]` fallback in the inspector, and **#8 — a real node bug:
-   `Resize` interpolates `BINARY` images with linear/cubic and keeps the
-   `BINARY` label**, producing values outside `{0,255}` under a type that
-   promises otherwise. Then triage §2 items 1–3 and 9–12 into this file.
+1. **Measure param-to-pixel latency** (CODE_REVIEW §2.9) — docs/08 makes
+   *measured p95 < 100 ms at 1080p* a Phase-1 exit criterion, and it has never
+   been measured, only estimated. Timestamp in `InspectorPanel.paramEdited`,
+   carry an edit-id through `ExecutionController`, log the delta when the viewer
+   sets its pixmap, surface p95 in the status bar. Cheap, always-on, and worth
+   having in place *before* the node count grows and a slow node appears.
 2. **Broaden node packs toward the MVP ~35** (docs/08 Phase 1) — 11 done; still
    want: in-range colour mask, crop-ROI (with pick-in-viewer RectParam), rotate/
    flip/warp/perspective, median/bilateral/box/unsharp, Sobel/Laplacian, filter-
@@ -133,6 +141,16 @@ These are *intentional*; if you change one, update the relevant doc.
   script, big morphology). Fix then: `ctx.is_cancelled()` checkpoints inside
   long-running nodes, and/or queue structural edits for the worker to apply
   between runs instead of blocking on them.
+- **Per-node queued signals will storm the GUI thread at scale** (CODE_REVIEW
+  §2.10): `EngineHooks → ExecutionController` emits `nodeStatus`/`outputsReady`
+  once per node. Fine at 11 nodes; docs/05 §6 (N6) wants batched-per-report
+  badge/metric updates by ~200. Don't fix prematurely — revisit when graphs grow.
+- **Port drag-wiring has no automated coverage** (CODE_REVIEW §2.11):
+  `PortItem.mousePressEvent → GraphScene.begin_wire/update_wire/finish_wire`.
+  Offscreen can't synthesize drags well; the tractable version is a scene-level
+  test calling `begin_wire`/`finish_wire` directly with scene positions over a
+  target port, asserting an edge appears and that incompatible ports emit
+  `connectionRejected`. Middle-button pan (§2.5) is untested for the same reason.
 - **If `service.run()` raises, that run's armed set is lost** (the controller
   logs the exception and continues). Left deliberate while fixing §1.2: the
   re-arm path carries arms forward on *supersession*, where a retry is certain

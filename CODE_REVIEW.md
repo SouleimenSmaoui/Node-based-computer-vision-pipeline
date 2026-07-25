@@ -272,12 +272,19 @@ def category_color(category: str) -> QtGui.QColor:
       failing, so they guard the regression rather than describe the fix.
       §1.3 reproduced exactly as reported: descending sort gave
       `fast, middle, slowest`.)*
-- [ ] §2 items 4–8 fixed (small, low-risk) or explicitly deferred with a STATUS.md note.
-      *Now STATUS.md "Next steps" item 1.*
-- [ ] §2 items 1–3, 9–12 triaged into STATUS.md "Next steps" / "Known weak spots".
-      *Partial: §2.1 recorded under "Known weak spots" and its over-optimistic
-      comment corrected (it lived in the module docstring, not `mutate()`'s).
-      The rest still to triage.*
+- [x] §2 items 4–8 fixed (small, low-risk) or explicitly deferred with a STATUS.md note.
+      *(2026-07-25 — 91 tests, was 87. §2.5 reimplements the pan by scrolling
+      directly instead of using the modern QMouseEvent overload: synthesizing
+      events at all was the fragile part, since it also leaned on
+      ScrollHandDrag's internals. It is the one fix with no test — synthesizing
+      the gesture is precisely what it removes. §2.7's `_WIDGETS` table is
+      deleted outright rather than re-pointed, since type dispatch already
+      covered every real case.)*
+- [x] §2 items 1–3, 9–12 triaged into STATUS.md "Next steps" / "Known weak spots".
+      *§2.1, §2.10, §2.11 → "Known weak spots" (§2.1's over-optimistic comment
+      corrected; it lived in the module docstring, not `mutate()`'s). §2.9 →
+      "Next steps" item 1. §2.2, §2.3 → "Next steps" item 3. §2.12 was already
+      tracked there.*
 - [x] STATUS.md + touched package READMEs updated (owner's standing documentation duty).
       *`cvflow/engine/README.md` (params-snapshot invariant),
       `cvflow/app/README.md` (threading rules the interactive loop depends on).*

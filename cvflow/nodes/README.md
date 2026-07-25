@@ -14,7 +14,7 @@ auto-discovered by `cvflow.plugins.loader`; adding a node = dropping a file here
 | `edges/` | Canny | typed `Image[GRAY]` input (BGR rejected at connect with hint), `validate()` enforces low ≤ high |
 | `threshold/` | Threshold | global / Otsu / adaptive-mean / adaptive-gaussian → `Image[BINARY]`; `validate()` guards adaptive block size |
 | `morphology/` | Morphology | erode/dilate/open/close/gradient/tophat/blackhat × rect/ellipse/cross element; space-preserving |
-| `geometry/` | Resize | scale-factor or absolute w/h; interpolation dropdown |
+| `geometry/` | Resize | scale-factor or absolute w/h; interpolation dropdown. **BINARY inputs are forced to nearest-neighbour** — linear/cubic/area blend neighbours and would emit e.g. 128 under a label promising `{0, 255}`, which `ImageBuffer` does not catch (it validates dtype, not the convention). Keeping the mask a mask also keeps `Find Contours` downstream (CODE_REVIEW §2.8) |
 | `analysis/` | Find Contours | binary → `ContourSet` (min-area filter); `BINARY` input satisfies its `GRAY` port via the subtype rule |
 | `draw/` | Draw Contours | image + contours → BGR; `−1` thickness fills. In the GUI a geometry output can also render as a crisp vector overlay without this node |
 
@@ -30,3 +30,11 @@ connected components, Hough lines/circles, template match, statistics), more
 Per-node checklist: `@node` with id/category/doc · labeled params with tooltips and
 sane ranges · outputs via `derive()` · never mutate inputs · a test in
 `tests/test_nodes.py`.
+
+**Respect the space you emit.** `derive()` keeps the input's `ColorSpace` label, and
+`ImageBuffer` only validates channel count and dtype — so an operation that breaks a
+space's *convention* (BINARY meaning strictly `{0, 255}`, HSV ranges, etc.) fails
+silently and propagates. Either constrain the operation (as `Resize` does) or emit the
+space you actually produced. When testing this, make the input adversarial: a default
+8-px `checker_image` survives a 0.5 resize under every interpolation mode, so it would
+have passed the buggy Resize — `cell=1` is what exposes the blending.

@@ -34,6 +34,7 @@ class GraphView(QtWidgets.QGraphicsView):
         self.registry = registry
         self._last_scene_pos = QtCore.QPointF(0, 0)
         self._panning = False
+        self._pan_from = QtCore.QPoint(0, 0)
 
         self.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
         self.setDragMode(QtWidgets.QGraphicsView.DragMode.RubberBandDrag)
@@ -67,34 +68,40 @@ class GraphView(QtWidgets.QGraphicsView):
         if _MIN_SCALE <= scale <= _MAX_SCALE:
             self.scale(factor, factor)
 
+    # Middle-button pan scrolls directly rather than synthesizing left-button
+    # events into ScrollHandDrag. The old trick used the 5-arg QMouseEvent
+    # constructor, deprecated in Qt 6 (a warning per click) and due for removal;
+    # it also depended on ScrollHandDrag's internals (CODE_REVIEW §2.5).
     def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:
         if event.button() == QtCore.Qt.MouseButton.MiddleButton:
             self._panning = True
-            self.setDragMode(QtWidgets.QGraphicsView.DragMode.ScrollHandDrag)
-            fake = QtGui.QMouseEvent(
-                QtCore.QEvent.Type.MouseButtonPress, event.position(),
-                QtCore.Qt.MouseButton.LeftButton, QtCore.Qt.MouseButton.LeftButton,
-                event.modifiers())
-            super().mousePressEvent(fake)
+            self._pan_from = event.position().toPoint()
+            self.viewport().setCursor(QtCore.Qt.CursorShape.ClosedHandCursor)
             event.accept()
             return
         super().mousePressEvent(event)
 
     def mouseReleaseEvent(self, event: QtGui.QMouseEvent) -> None:
         if self._panning and event.button() == QtCore.Qt.MouseButton.MiddleButton:
-            fake = QtGui.QMouseEvent(
-                QtCore.QEvent.Type.MouseButtonRelease, event.position(),
-                QtCore.Qt.MouseButton.LeftButton, QtCore.Qt.MouseButton.LeftButton,
-                event.modifiers())
-            super().mouseReleaseEvent(fake)
             self._panning = False
-            self.setDragMode(QtWidgets.QGraphicsView.DragMode.RubberBandDrag)
+            self.viewport().unsetCursor()
             event.accept()
             return
         super().mouseReleaseEvent(event)
 
     def mouseMoveEvent(self, event: QtGui.QMouseEvent) -> None:
         self._last_scene_pos = self.mapToScene(event.position().toPoint())
+        if self._panning:
+            # Integer viewport coords throughout, so repeated moves can't
+            # accumulate sub-pixel drift.
+            pos = event.position().toPoint()
+            delta = pos - self._pan_from
+            self._pan_from = pos
+            h, v = self.horizontalScrollBar(), self.verticalScrollBar()
+            h.setValue(h.value() - delta.x())
+            v.setValue(v.value() - delta.y())
+            event.accept()
+            return
         super().mouseMoveEvent(event)
 
     def fit_all(self) -> None:

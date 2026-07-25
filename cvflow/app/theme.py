@@ -7,6 +7,8 @@ Status is *also* encoded by badge glyph in the node items — never colour alone
 
 from __future__ import annotations
 
+import hashlib
+
 from PySide6 import QtGui, QtWidgets
 
 # ---- surfaces (docs/05 §6) -------------------------------------------------
@@ -46,7 +48,13 @@ _CATEGORY_COLORS = {
 def category_color(category: str) -> QtGui.QColor:
     hexv = _CATEGORY_COLORS.get(category)
     if hexv is None:
-        hexv = _OKABE_ITO[hash(category) % len(_OKABE_ITO)]
+        # A stable digest, not built-in hash(): str hashing is salted per
+        # process (PYTHONHASHSEED), so plugin categories would change colour on
+        # every launch and users could not learn the graph by colour.
+        idx = int.from_bytes(
+            hashlib.blake2b(category.encode("utf-8"), digest_size=2).digest(),
+            "big") % len(_OKABE_ITO)
+        hexv = _OKABE_ITO[idx]
     return QtGui.QColor(hexv)
 
 

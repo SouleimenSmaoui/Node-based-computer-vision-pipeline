@@ -146,6 +146,29 @@ class TestResize:
                        params={"mode": "absolute", "width": 200, "height": 100})["out"]
         assert (out.width, out.height) == (200, 100)
 
+    def test_binary_stays_binary_whatever_the_interpolation(self, full_registry):
+        """CODE_REVIEW §2.8 — linear/cubic/area blend neighbours, so a resized
+        mask acquired in-between values while still labelled BINARY. Nothing
+        downstream catches it: ImageBuffer validates dtype, not the {0,255}
+        convention.
+
+        ``cell=1`` matters. The default 8-px checker survives a 0.5 scale even
+        with area interpolation, because every 2x2 source region falls inside
+        one uniform block — so a coarser mask would let the bug through.
+        """
+        spec = full_registry.get("cvflow.geometry.resize")
+        src = checker_image(64, cell=1, space="BINARY")
+        for interp in ("linear", "cubic", "area", "nearest"):
+            for scale in (0.5, 0.37):
+                out = run_node(spec.node_class, inputs={"image": src},
+                               params={"mode": "scale", "scale": scale,
+                                       "interp": interp})["out"]
+                assert out.space is ColorSpace.BINARY
+                stray = set(np.unique(out.data)) - {0, 255}
+                assert not stray, (
+                    f"{interp} at scale {scale} produced {sorted(stray)[:5]}, "
+                    f"outside {{0, 255}}")
+
 
 class TestInvert:
     def test_negative(self, full_registry):

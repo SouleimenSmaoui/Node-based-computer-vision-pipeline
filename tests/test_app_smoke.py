@@ -101,6 +101,56 @@ def test_inspector_builds_widgets_from_specs(qapp):
     assert set(panel._widgets) == {p.name for p in inst.spec.params}
 
 
+def test_unknown_param_spec_falls_back_to_string_editor(qapp):
+    """CODE_REVIEW §2.7 — a hint-keyed fallback table routed
+    ``widget_hint="slider"`` to the int editor, so any third-party ParamSpec
+    declaring that hint without being an IntParam crashed on ``spec.min``."""
+    from cvflow.app.inspector.widgets import _StringWidget, build_param_widget
+    from cvflow.core.params import ParamSpec
+
+    class ExoticParam(ParamSpec):
+        widget_hint = "slider"  # the trap: hint of an int, type of neither
+
+    widget = build_param_widget(ExoticParam("Exotic", default="x"))
+    assert isinstance(widget, _StringWidget)
+
+
+def test_log_handler_does_not_accumulate_across_windows(qapp):
+    """CODE_REVIEW §2.6 — one QtLogHandler was added to the process-wide
+    "cvflow" logger per MainWindow and never removed, so handlers stacked up
+    pointing at consoles that no longer exist."""
+    import logging
+
+    from cvflow.app.main_window import MainWindow
+
+    root = logging.getLogger("cvflow")
+    before = len(root.handlers)
+    for _ in range(3):
+        win = MainWindow()
+        win.session.mark_clean()  # avoid the modal discard dialog
+        win.session.shutdown()
+        win.close()
+    assert len(root.handlers) == before
+
+
+def test_category_colour_is_stable_across_processes():
+    """CODE_REVIEW §2.4 — the fallback used built-in hash(), which is salted per
+    process, so a plugin's category changed colour on every launch."""
+    import subprocess
+    import sys
+
+    code = ("from cvflow.app.theme import category_color;"
+            "print(category_color('Third Party Pack').name())")
+    seen = set()
+    for seed in ("0", "12345"):
+        env = dict(os.environ, PYTHONHASHSEED=seed, QT_QPA_PLATFORM="offscreen")
+        proc = subprocess.run([sys.executable, "-c", code], env=env,
+                              capture_output=True, text=True, timeout=120)
+        assert proc.returncode == 0, proc.stderr
+        seen.add(proc.stdout.strip())
+    assert len(seen) == 1, f"category colour varied across hash seeds: {seen}"
+
+
 def test_profiler_sorts_slowest_node_first(qapp):
     """CODE_REVIEW §1.3 — the table stored formatted strings, so Qt sorted them
     lexicographically ("102.35" < "9.50") and the slowest node landed last."""

@@ -38,6 +38,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.resize(1500, 950)
 
         self.registry, failures = builtin_registry()
+        self._log_handler: Optional[QtLogHandler] = None
         self.session: Optional[WorkflowSession] = None
         self.scene: Optional[GraphScene] = None
         self.view: Optional[GraphView] = None
@@ -169,6 +170,11 @@ class MainWindow(QtWidgets.QMainWindow):
         root = logging.getLogger("cvflow")
         root.setLevel(logging.INFO)
         root.addHandler(handler)
+        # Kept so closeEvent can detach it. The "cvflow" logger is process-wide,
+        # so without removal every window ever opened leaves a handler pointing
+        # at its (possibly deleted) console — the tests open several
+        # (CODE_REVIEW §2.6).
+        self._log_handler = handler
 
     # ---- session lifecycle ------------------------------------------------
     def new_workflow(self) -> None:
@@ -460,4 +466,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         if self.session:
             self.session.shutdown()
+        if self._log_handler is not None:
+            logging.getLogger("cvflow").removeHandler(self._log_handler)
+            self._log_handler = None
         super().closeEvent(event)
