@@ -23,15 +23,24 @@ def node_fingerprint(
     inst: NodeInstance,
     input_fps: list[tuple[str, Any, str]],
     base_dir: str | None,
+    params: dict[str, Any] | None = None,
 ) -> str:
-    """``input_fps``: (port_name, upstream fingerprint hex | None, coercion label)."""
+    """``input_fps``: (port_name, upstream fingerprint hex | None, coercion label).
+
+    ``params``: a coherent snapshot of the instance's params. The caller must
+    pass the *same* dict here and to execution — reading ``inst.params`` twice
+    at different times lets a concurrent GUI param edit land in between, so the
+    node executes with new values but caches under the old fingerprint. That
+    entry then serves a wrong image whenever the user returns to the old value
+    (slider back, or undo). Defaults to a live read for callers outside a run.
+    """
     spec = inst.spec
-    params = {p.name: p.to_json(inst.params.get(p.name)) for p in spec.params}
+    values = dict(inst.params) if params is None else params
     payload = {
         "t": spec.type_id,
         "v": spec.version,
-        "p": params,
-        "x": spec.node_class.external_state(inst.params, base_dir),
+        "p": {p.name: p.to_json(values.get(p.name)) for p in spec.params},
+        "x": spec.node_class.external_state(values, base_dir),
         "i": input_fps,
     }
     blob = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)

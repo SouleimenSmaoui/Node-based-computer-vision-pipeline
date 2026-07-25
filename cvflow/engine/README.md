@@ -16,6 +16,17 @@ no separate dirty set (STATUS.md deviation #1). `workers=0` executes inline
 (deterministic, used by tests); default is a small thread pool (OpenCV releases the
 GIL, so parallel branches are real).
 
+**Params snapshot invariant** (added 2026-07-25, CODE_REVIEW §1.1). `dispatch()` takes
+**one** `dict(inst.params)` per node per run and threads that same dict through config
+validation, `node_fingerprint(..., params=)` and `_execute_node(..., params)`. Nothing
+downstream of dispatch may re-read `inst.params`. The GUI edits params from another
+thread *without* the run-lock; two reads at different times let an edit land between
+them, so the node executes with the new value but its output is cached under the old
+value's fingerprint — a wrong image then served forever after, whenever the user
+returns to that old value (slider back, or undo). `node_fingerprint`'s `params`
+argument is optional so callers outside a run keep the live-read behavior.
+Regression tests: `tests/test_engine.py::TestParamSnapshotCoherence`.
+
 Clients drive it like this (the GUI will do the same from a worker thread):
 
 ```python

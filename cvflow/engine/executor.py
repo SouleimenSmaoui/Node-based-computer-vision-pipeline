@@ -148,6 +148,11 @@ class ExecutionService:
         def dispatch(nid: str) -> None:
             inst = self.graph.nodes[nid]
             node_cls = inst.spec.node_class
+            # ONE coherent read of the params per node per run. The GUI mutates
+            # params without the run-lock; re-reading inst.params later would let
+            # an edit land between fingerprinting and execution and poison the
+            # cache (CODE_REVIEW §1.1).
+            params_snap = dict(inst.params)
 
             if token and token.cancelled:
                 finalize(nid, NodeMetrics(NodeStatus.CANCELLED))
@@ -157,7 +162,7 @@ class ExecutionService:
                 failed.add(nid)
                 return
 
-            issue = self._config_issue(inst)
+            issue = self._config_issue(inst, params_snap)
             if issue:
                 failed.add(nid)
                 report.errors.append(NodeError(nid, issue))
@@ -169,7 +174,8 @@ class ExecutionService:
                 failed.add(nid)
                 finalize(nid, NodeMetrics(NodeStatus.BLOCKED))
                 return
-            fp = node_fingerprint(inst, input_fps, self.resources.base_dir)
+            fp = node_fingerprint(inst, input_fps, self.resources.base_dir,
+                                  params=params_snap)
 
             if node_cls.side_effect and nid not in armed_set:
                 fps[nid] = None  # consumers of an unarmed sink are blocked
@@ -196,11 +202,13 @@ class ExecutionService:
                 return
 
             if self._pool_workers() == 0:
-                result = _guarded(self._execute_node, nid, inst, input_values, token)
+                result = _guarded(self._execute_node, nid, inst, input_values,
+                                  token, params_snap)
                 complete(nid, fp, use_cache, result)
             else:
                 fut = self._ensure_pool().submit(
-                    _guarded, self._execute_node, nid, inst, input_values, token)
+                    _guarded, self._execute_node, nid, inst, input_values,
+                    token, params_snap)
                 in_flight[fut] = (nid, fp, use_cache)
 
         def complete(nid: str, fp: str, use_cache: bool, result: "_ExecResult") -> None:
@@ -286,15 +294,22 @@ class ExecutionService:
             node_id=inst.id, spec=inst.spec, params=inst.params,
             resources=self.resources, state=self._state.setdefault(inst.id, {}))
 
-    def _config_issue(self, inst: NodeInstance) -> str | None:
-        """Pre-execution validation: required inputs wired, params coherent."""
+    def _config_issue(
+        self, inst: NodeInstance, params: dict[str, Any] | None = None
+    ) -> str | None:
+        """Pre-execution validation: required inputs wired, params coherent.
+
+        ``params``: the run's snapshot, so validation judges exactly the values
+        that will be fingerprinted and executed (CODE_REVIEW §1.1).
+        """
         for decl in inst.spec.inputs:
             if decl.optional or decl.variadic:
                 continue
             if self.graph.edge_into(inst.id, decl.name) is None:
                 return f"required input {decl.name!r} is not connected"
         try:
-            issues = self._instance(inst).validate(dict(inst.params))
+            values = dict(inst.params) if params is None else dict(params)
+            issues = self._instance(inst).validate(values)
         except Exception as exc:  # a broken validate() is a config error
             return f"validate() raised: {exc}"
         for issue in issues:
@@ -336,10 +351,13 @@ class ExecutionService:
         inst: NodeInstance,
         input_values: dict[str, Any],
         token: CancellationToken | None,
+        params: dict[str, Any],
     ) -> tuple[dict[str, Any], float]:
+        """``params`` is dispatch()'s snapshot — never re-read ``inst.params``
+        here, or the executed values can drift from the fingerprinted ones."""
         node_obj = self._instance(inst)
         ctx = ExecutionContext(
-            node_id=nid, spec=inst.spec, inputs=input_values, params=inst.params,
+            node_id=nid, spec=inst.spec, inputs=input_values, params=params,
             resources=self.resources, state=self._state.setdefault(nid, {}),
             token=token)
         if nid not in self._setup_done:

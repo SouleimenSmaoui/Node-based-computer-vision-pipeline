@@ -71,6 +71,81 @@ class TestIncrementalExecution:
         assert report.nodes["add2"].status is NodeStatus.CACHED
 
 
+class TestParamSnapshotCoherence:
+    """CODE_REVIEW §1.1 — one coherent params read per node per run.
+
+    The GUI edits params without taking the run-lock. When the engine read
+    ``inst.params`` once for the fingerprint and again at execution, an edit
+    landing between the two made the node execute with the *new* value while
+    caching the result under the *old* value's key. Nothing looks wrong until
+    the user returns to the old value (slider back, or undo) — then the poisoned
+    entry hits and a wrong image is displayed persistently.
+    """
+
+    def test_fingerprint_uses_the_snapshot_not_live_params(self, chain_graph):
+        from cvflow.engine.cache import node_fingerprint
+
+        inst = chain_graph.nodes["add2"]
+        snap = dict(inst.params)
+        fp = node_fingerprint(inst, [], None, params=snap)
+
+        inst.params["amount"] = 99  # an edit lands after the snapshot was taken
+        assert node_fingerprint(inst, [], None, params=snap) == fp
+        assert node_fingerprint(inst, [], None) != fp  # a live read does see it
+
+    def test_execute_node_ignores_edits_after_the_snapshot(self, chain_graph):
+        """``_execute_node`` must use the snapshot it is handed — re-reading
+        ``inst.params`` is the second read that made the race possible."""
+        import cv2
+
+        svc = make_service(chain_graph)
+        svc.run(observed=["src"])
+        source = svc.get_output("src", "out")
+
+        inst = chain_graph.nodes["add1"]
+        snap = dict(inst.params)
+        inst.params["amount"] = 200  # live edit, after the snapshot
+
+        outputs, _ = svc._execute_node("add1", inst, {"image": source}, None, snap)
+        assert np.array_equal(outputs["out"].data,
+                              cv2.add(source.data, snap["amount"]))
+
+    def test_mid_dispatch_edit_cannot_poison_the_cache(self, chain_graph):
+        """End-to-end: drop an edit into the exact window the race needs —
+        between fingerprinting and execution, where ``_assemble_inputs`` runs.
+
+        Patching that call is just a deterministic stand-in for the GUI thread
+        winning the race; the assertion is on real cached output.
+        """
+        svc = make_service(chain_graph)
+
+        # Ground truth for amount=42, computed with nothing interfering.
+        chain_graph.set_param("add2", "amount", 42)
+        svc.run(observed=["add2"])
+        truth = svc.get_output("add2", "out").data.copy()
+        svc.cache.clear()
+
+        real_assemble = svc._assemble_inputs
+
+        def racing_assemble(inst, values):
+            if inst.id == "add2":  # the GUI edits mid-dispatch
+                chain_graph.set_param("add2", "amount", 99)
+            return real_assemble(inst, values)
+
+        chain_graph.set_param("add2", "amount", 42)
+        svc._assemble_inputs = racing_assemble
+        try:
+            svc.run(observed=["add2"])
+        finally:
+            svc._assemble_inputs = real_assemble
+
+        # The user slides back to 42. Serving a cached +99 image here is the bug.
+        chain_graph.set_param("add2", "amount", 42)
+        report = svc.run(observed=["add2"])
+        assert report.nodes["add2"].status is NodeStatus.CACHED
+        assert np.array_equal(svc.get_output("add2", "out").data, truth)
+
+
 class TestErrorIsolation:
     def test_failure_blocks_descendants_not_siblings(self, registry):
         from cvflow.core.graph import Graph

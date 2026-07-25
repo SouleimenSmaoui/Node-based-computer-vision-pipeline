@@ -14,8 +14,12 @@ interactive loop stays responsive:
   queued connections. The GUI never blocks on the engine.
 * **Edit serialization** — structural graph mutations (add/remove/connect) go
   through :meth:`mutate`, which cancels the current run and takes the run-lock
-  the worker holds during ``run()``. Param edits skip the lock: reassigning one
-  ``params`` value is benign and the next run corrects any staleness.
+  the worker holds during ``run()``. Param edits skip the lock: the engine takes
+  one coherent snapshot of each node's params at dispatch, so an edit landing
+  mid-run can at worst waste a superseded run — it can never make a node execute
+  with values other than the ones its cache entry is keyed on. (Before that
+  snapshot existed the claim here was that param edits were simply "benign";
+  they were not — see CODE_REVIEW §1.1.)
 """
 
 from __future__ import annotations
