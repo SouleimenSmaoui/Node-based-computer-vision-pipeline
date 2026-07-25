@@ -9,6 +9,7 @@ not installed, so the core suite stays runnable without the ``app`` extra.
 from __future__ import annotations
 
 import os
+import threading
 import time
 from pathlib import Path
 
@@ -98,6 +99,101 @@ def test_inspector_builds_widgets_from_specs(qapp):
     panel = InspectorPanel()
     panel.set_node(inst)
     assert set(panel._widgets) == {p.name for p in inst.spec.params}
+
+
+def test_profiler_sorts_slowest_node_first(qapp):
+    """CODE_REVIEW §1.3 — the table stored formatted strings, so Qt sorted them
+    lexicographically ("102.35" < "9.50") and the slowest node landed last."""
+    from cvflow.app.panels.profiler import ProfilerPanel
+    from cvflow.engine.profiling import NodeMetrics, NodeStatus, RunReport
+
+    report = RunReport(generation=1)
+    for nid, ms in (("fast", 9.5), ("slowest", 102.35), ("middle", 23.1)):
+        report.nodes[nid] = NodeMetrics(NodeStatus.OK, ms=ms)
+
+    panel = ProfilerPanel()
+    panel.update_report(report)
+
+    ordered = [panel.item(r, 0).text() for r in range(panel.rowCount())]
+    assert ordered == ["slowest", "middle", "fast"]
+
+
+# ---- armed ("Run") request handling — CODE_REVIEW §1.2 ---------------------
+
+
+@pytest.fixture
+def sink_controller(qapp, tmp_path):
+    """A controller over ``load -> save``, with the save sink left unarmed."""
+    from cvflow.app.controllers.execution_controller import ExecutionController
+    from cvflow.core.graph import Graph
+    from cvflow.engine import EngineSettings
+    from cvflow.plugins import builtin_registry
+
+    reg, _ = builtin_registry()
+    asset = Path(__file__).resolve().parents[1] / "examples" / "assets" / "sample.png"
+    out = tmp_path / "saved.png"
+
+    graph = Graph()
+    graph.add_node(reg.get("cvflow.io.load_image"), node_id="load",
+                   params={"path": str(asset)})
+    graph.add_node(reg.get("cvflow.io.save_image"), node_id="save",
+                   params={"path": str(out)})
+    graph.connect("load", "image", "save", "image")
+
+    ctl = ExecutionController(graph, settings=EngineSettings(workers=0))
+    yield ctl, out
+    ctl.shutdown()
+
+
+def test_arm_and_run_publishes_armed_under_the_condition(sink_controller):
+    """Defect A: ``_armed`` written outside ``_cond`` can be wiped by the
+    worker's read-and-clear — the user clicks Run and no sink ever executes."""
+    ctl, out = sink_controller
+    published = threading.Event()
+
+    with ctl._cond:
+        t = threading.Thread(
+            target=lambda: (ctl.arm_and_run(["save"]), published.set()))
+        t.start()
+        # We hold _cond. A correct arm_and_run is blocked on it and cannot have
+        # published anything yet; the buggy version assigned before locking.
+        assert not published.wait(0.25)
+        assert ctl._armed == set()
+
+    assert published.wait(2.0)
+    t.join(timeout=2.0)
+
+    end = time.time() + 4.0
+    while not out.exists() and time.time() < end:
+        time.sleep(0.02)
+    assert out.exists(), "armed Run never executed the sink"
+
+
+def test_incomplete_sinks_keeps_only_unfinished_sinks_armed(qapp):
+    """Defect B: the re-arm set after a superseded run."""
+    from cvflow.app.controllers.execution_controller import ExecutionController
+    from cvflow.engine.profiling import NodeMetrics, NodeStatus, RunReport
+
+    report = RunReport(generation=1)
+    report.nodes["done"] = NodeMetrics(NodeStatus.OK)
+    report.nodes["skipped"] = NodeMetrics(NodeStatus.SKIPPED)
+    report.nodes["cancelled"] = NodeMetrics(NodeStatus.CANCELLED)
+
+    stay_armed = ExecutionController._incomplete_sinks(
+        {"done", "skipped", "cancelled", "never_dispatched"}, report)
+    assert stay_armed == {"skipped", "cancelled", "never_dispatched"}
+
+
+def test_arm_and_run_does_not_drop_a_carried_forward_arm(sink_controller):
+    """Defect B follow-on: a Run click must not clobber the arm a superseded
+    run carried forward, or that export is lost after all."""
+    ctl, _ = sink_controller
+    ctl.shutdown()  # stop the worker so nothing consumes _armed underneath us
+
+    with ctl._cond:
+        ctl._armed = {"save"}  # as _incomplete_sinks would have carried it
+    ctl.arm_and_run([])        # Run clicked; arms nothing new
+    assert ctl._armed == {"save"}
 
 
 # ---- full interactive loop -------------------------------------------------

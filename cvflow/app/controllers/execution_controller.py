@@ -32,7 +32,7 @@ from PySide6 import QtCore
 from cvflow.core.graph import Graph
 from cvflow.engine import EngineSettings, ExecutionService
 from cvflow.engine.context import CancellationToken, Resources
-from cvflow.engine.profiling import NodeMetrics
+from cvflow.engine.profiling import NodeMetrics, NodeStatus, RunReport
 
 DEBOUNCE_MS = 30
 
@@ -90,9 +90,22 @@ class ExecutionController(QtCore.QObject):
             self.schedule()
 
     def arm_and_run(self, sink_ids: Iterable[str]) -> None:
-        """Arm side-effect nodes for exactly the next run (Run button)."""
-        self._armed = {n for n in sink_ids if n in self.graph.nodes}
-        self._launch_now()
+        """Arm side-effect nodes for the next run (Run button).
+
+        The write happens under ``_cond``, together with the launch. Published
+        outside it, the worker's read-and-clear of ``_armed`` could land between
+        this assignment and the launch and wipe it — the user clicks Run, no
+        sink executes, and nothing reports why (CODE_REVIEW §1.2 defect A).
+
+        Unions rather than replaces, so this cannot drop an arm that a
+        superseded run carried forward (see :meth:`_incomplete_sinks`).
+        """
+        with self._cond:
+            self._armed |= {n for n in sink_ids if n in self.graph.nodes}
+            self._dirty = True
+            if self._token is not None:
+                self._token.cancel()   # supersede any in-flight run
+            self._cond.notify()
 
     # ---- scheduling --------------------------------------------------------
     def schedule(self) -> None:
@@ -154,8 +167,26 @@ class ExecutionController(QtCore.QObject):
             # Skip reporting a run we already know is stale (about to redo).
             with self._cond:
                 superseded = self._dirty
+                if superseded and armed:
+                    # The arm was consumed at pickup. If a slider tick superseded
+                    # the run, the sinks end SKIPPED/CANCELLED and this report is
+                    # discarded — so without carrying the arm forward the export
+                    # silently never happens (CODE_REVIEW §1.2 defect B). The
+                    # retry then saves with the newest params, which is what the
+                    # user wanted anyway.
+                    self._armed |= self._incomplete_sinks(armed, report)
             if not superseded:
                 self.reportReady.emit(report)
+
+    @staticmethod
+    def _incomplete_sinks(armed: set[str], report: RunReport) -> set[str]:
+        """Armed sinks that did not actually complete, so must stay armed.
+
+        A sink missing from the report never ran at all (cancelled before
+        dispatch), which counts as incomplete.
+        """
+        return {n for n in armed
+                if (m := report.nodes.get(n)) is None or m.status is not NodeStatus.OK}
 
     # ---- engine hooks (worker thread) → Qt signals -------------------------
     def _on_node_status(self, node_id: str, metrics: NodeMetrics) -> None:

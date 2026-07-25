@@ -80,21 +80,21 @@ These are *intentional*; if you change one, update the relevant doc.
 > the `examples/out/` sink output; `examples/assets/sample.png` **is** tracked so
 > a fresh clone can run the demo. `.gitattributes` pins `eol=lf` so a Windows
 > checkout doesn't rewrite every file. No remote yet — that gates CI (step 7).
+>
+> **CODE_REVIEW §1 is fixed** (2026-07-25, same session): §1.1 params snapshot,
+> §1.2 armed-run publication + re-arm on supersession, §1.3 numeric profiler
+> sort. **87 tests** green (was 80). Every one of the 7 new tests was verified to
+> *fail* against the pre-fix code, so they are real regression guards rather than
+> restatements of current behaviour. §2 items 4–8 are now step 1 below.
 
-1. **Fix the three critical findings in [CODE_REVIEW.md](CODE_REVIEW.md) §1** —
-   re-verified present in the committed tree on 2026-07-25: **§1.1** cache
-   poisoning (`engine/cache.py:22` — `node_fingerprint` still takes no `params`
-   snapshot, so params are read twice per node while the GUI mutates them);
-   **§1.2** armed "Run" silently dropped (`app/controllers/execution_controller.py:90`
-   publishes `_armed` outside `_cond`; `:151-154` discards a superseded report
-   without re-arming the sinks); **§1.3** profiler sorts formatted strings
-   lexicographically (`app/panels/profiler.py:49,67`). Patches are written out in
-   CODE_REVIEW §3; each fix needs a regression test. **Do this before growing the
-   node packs** — §1.1 surfaces as a *stale image after undo / sliding a param
-   back*, silent and sticky, and every added node multiplies the cache entries
-   you'd have to search to find it. Then CODE_REVIEW §2 items 4–8 (small,
-   low-risk; #8 is a real node bug — `Resize` interpolates `BINARY` images and
-   keeps the `BINARY` label).
+1. **CODE_REVIEW §2 items 4–8** — the small, low-risk cleanups: stable category
+   colours for plugin categories (`hash()` is salted per process, so they change
+   every launch), the deprecated `QMouseEvent` 5-arg constructor in middle-button
+   pan, `QtLogHandler` accumulating one handler per `MainWindow`, the unsafe
+   `_WIDGETS["slider"]` fallback in the inspector, and **#8 — a real node bug:
+   `Resize` interpolates `BINARY` images with linear/cubic and keeps the
+   `BINARY` label**, producing values outside `{0,255}` under a type that
+   promises otherwise. Then triage §2 items 1–3 and 9–12 into this file.
 2. **Broaden node packs toward the MVP ~35** (docs/08 Phase 1) — 11 done; still
    want: in-range colour mask, crop-ROI (with pick-in-viewer RectParam), rotate/
    flip/warp/perspective, median/bilateral/box/unsharp, Sobel/Laplacian, filter-
@@ -126,3 +126,16 @@ These are *intentional*; if you change one, update the relevant doc.
 - `EnumParam` for Canny aperture stores strings ("3"/"5"/"7") — works, but an
   int-choices EnumParam variant would be cleaner.
 - No logging configuration file yet; CLI uses basicConfig only.
+- `ExecutionController.mutate()` blocks the GUI thread for as long as the
+  in-flight *node* takes, because the engine polls cancellation only *between*
+  nodes (CODE_REVIEW §2.1). Invisible today — every node is ms-scale — but it
+  becomes a real freeze the day a slow node lands (template match, custom
+  script, big morphology). Fix then: `ctx.is_cancelled()` checkpoints inside
+  long-running nodes, and/or queue structural edits for the worker to apply
+  between runs instead of blocking on them.
+- **If `service.run()` raises, that run's armed set is lost** (the controller
+  logs the exception and continues). Left deliberate while fixing §1.2: the
+  re-arm path carries arms forward on *supersession*, where a retry is certain
+  to be different, but auto-retrying after a crash could spin forever on a
+  persistent bug. A sink that vanishes this way is silent — worth surfacing in
+  the Errors panel when §2.2 (armed-run status feedback) is done.

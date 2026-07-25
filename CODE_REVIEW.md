@@ -266,7 +266,18 @@ def category_color(category: str) -> QtGui.QColor:
 
 ## Definition of done for this review
 
-- [ ] §1.1, §1.2, §1.3 fixed, each with a regression test; full suite green.
+- [x] §1.1, §1.2, §1.3 fixed, each with a regression test; full suite green.
+      *(2026-07-25 — 87 tests, was 80. Commits: `b49f022` §1.1, plus §1.2/§1.3.
+      All 7 new tests were run against the pre-fix code first and confirmed
+      failing, so they guard the regression rather than describe the fix.
+      §1.3 reproduced exactly as reported: descending sort gave
+      `fast, middle, slowest`.)*
 - [ ] §2 items 4–8 fixed (small, low-risk) or explicitly deferred with a STATUS.md note.
+      *Now STATUS.md "Next steps" item 1.*
 - [ ] §2 items 1–3, 9–12 triaged into STATUS.md "Next steps" / "Known weak spots".
-- [ ] STATUS.md + touched package READMEs updated (owner's standing documentation duty).
+      *Partial: §2.1 recorded under "Known weak spots" and its over-optimistic
+      comment corrected (it lived in the module docstring, not `mutate()`'s).
+      The rest still to triage.*
+- [x] STATUS.md + touched package READMEs updated (owner's standing documentation duty).
+      *`cvflow/engine/README.md` (params-snapshot invariant),
+      `cvflow/app/README.md` (threading rules the interactive loop depends on).*

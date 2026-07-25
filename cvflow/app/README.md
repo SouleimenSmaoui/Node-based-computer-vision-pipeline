@@ -47,6 +47,21 @@ suffix re-executes; upstream is served from cache. A newer edit cancels the
 in-flight run via a `CancellationToken` (latest-wins). The GUI thread never
 blocks on the engine.
 
+### Threading rules this loop depends on (CODE_REVIEW §1.1–§1.2, fixed 2026-07-25)
+
+- **Param edits skip the run-lock, and that is safe only because the engine
+  snapshots params once per node per run** (`engine/dispatch`). Two reads at
+  different times let an edit land between fingerprinting and execution, caching
+  a result under the wrong key — a wrong image served on every later visit to
+  that value. Don't reintroduce a second read.
+- **`_armed` is published under `_cond`, together with the launch.** Written
+  outside it, the worker's read-and-clear could wipe the arm: the user clicks
+  **Run**, nothing executes, nothing explains why.
+- **A superseded armed run re-arms its unfinished sinks** (`_incomplete_sinks`).
+  Otherwise a slider tick landing during a save silently swallows the export —
+  the arm was already consumed and the report is discarded. `arm_and_run` unions
+  rather than replaces so a later Run click can't drop a carried-forward arm.
+
 ## Deliberate design choices (deviations recorded in STATUS.md)
 
 - **Bespoke editor, not NodeGraphQt.** docs/08 named NodeGraphQt for Phase 1 with

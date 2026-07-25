@@ -14,6 +14,25 @@ from cvflow.engine.profiling import NodeStatus, RunReport
 _HEADERS = ["Node", "Status", "Last ms", "EMA ms", "% run", "Cache", "Bytes"]
 
 
+class _NumericItem(QtWidgets.QTableWidgetItem):
+    """Shows formatted text but sorts by the underlying number.
+
+    ``QTableWidgetItem.__lt__`` compares the DisplayRole *string*, so storing
+    the formatted value made "102.35" sort before "9.50" and put the slowest
+    node at the bottom of a descending sort — the exact opposite of what this
+    panel is for (CODE_REVIEW §1.3).
+    """
+
+    def __init__(self, text: str, value: float) -> None:
+        super().__init__(text)
+        self._value = value
+
+    def __lt__(self, other: QtWidgets.QTableWidgetItem) -> bool:
+        if isinstance(other, _NumericItem):
+            return self._value < other._value
+        return super().__lt__(other)
+
+
 class ProfilerPanel(QtWidgets.QTableWidget):
     nodeActivated = QtCore.Signal(str)
 
@@ -41,15 +60,13 @@ class ProfilerPanel(QtWidgets.QTableWidget):
                 f"{m.ema_ms:.2f}" if m.ema_ms else "",
                 f"{pct:.0f}%", cache, _fmt_bytes(m.out_bytes),
             ]
+            # Numeric columns sort by value, not lexically.
+            numeric = {2: m.ms, 3: m.ema_ms or 0.0, 4: pct, 6: float(m.out_bytes)}
             for c, text in enumerate(values):
-                item = QtWidgets.QTableWidgetItem()
-                # Numeric columns sort by value, not lexically.
-                if c in (2, 3, 4, 6):
-                    item.setData(QtCore.Qt.ItemDataRole.DisplayRole, text)
-                    item.setData(QtCore.Qt.ItemDataRole.UserRole + 1,
-                                 _num(m, c, pct))
+                if c in numeric:
+                    item = _NumericItem(text, numeric[c])
                 else:
-                    item.setText(text)
+                    item = QtWidgets.QTableWidgetItem(text)
                 if c == 0:
                     item.setData(QtCore.Qt.ItemDataRole.UserRole, nid)
                 self.setItem(r, c, item)
@@ -62,16 +79,6 @@ class ProfilerPanel(QtWidgets.QTableWidget):
             nid = item.data(QtCore.Qt.ItemDataRole.UserRole)
             if nid:
                 self.nodeActivated.emit(nid)
-
-
-def _num(metrics, col: int, pct: float) -> float:
-    if col == 2:
-        return metrics.ms
-    if col == 3:
-        return metrics.ema_ms or 0.0
-    if col == 4:
-        return pct
-    return float(metrics.out_bytes)
 
 
 def _fmt_bytes(n: int) -> str:
