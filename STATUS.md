@@ -81,49 +81,56 @@ These are *intentional*; if you change one, update the relevant doc.
 > a fresh clone can run the demo. `.gitattributes` pins `eol=lf` so a Windows
 > checkout doesn't rewrite every file. No remote yet — that gates CI (step 7).
 >
-> **CODE_REVIEW §1 and §2.4–2.8 are fixed** (2026-07-25, same session): §1.1
-> params snapshot, §1.2 armed-run publication + re-arm on supersession, §1.3
-> numeric profiler sort, §2.4 stable category colours, §2.5 middle-button pan
-> without synthetic `QMouseEvent`s, §2.6 log handler removed on close, §2.7
-> unknown-spec widget fallback, §2.8 `Resize` keeps BINARY masks binary.
-> **91 tests** green (was 80). Every new test was run against the pre-fix code
-> and confirmed failing, so they are real regression guards. §2.5 is the one
-> fix without a test — it is a mouse-gesture path, and synthesizing the drag is
-> what the fix exists to avoid (related gap: §2.11 below).
+> **CODE_REVIEW is fully closed** (2026-07-25, same session): §1.1 params
+> snapshot, §1.2 armed-run publication + re-arm on supersession, §1.3 numeric
+> profiler sort, §2.4 stable category colours, §2.5 middle-button pan without
+> synthetic `QMouseEvent`s, §2.6 log handler removed on close, §2.7 unknown-spec
+> widget fallback, §2.8 `Resize` keeps BINARY masks binary, §2.9 param-to-pixel
+> latency now measured. **97 tests** green (was 80). Every new regression test
+> was run against the pre-fix code and confirmed failing. §2.5 is the one fix
+> without a test — it is a mouse-gesture path, and synthesizing the drag is what
+> the fix exists to avoid (related gap: §2.11 below). §2.2, §2.3 fold into step
+> 2 (editor/viewer depth); §2.1, §2.10, §2.11 are under "Known weak spots".
 >
-> **Remaining CODE_REVIEW §2, triaged:** §2.9 is step 1 below; §2.2 (armed-run
-> status feedback) and §2.3 (viewer mislabels a stale image under a contours
-> overlay — contours-over-source is useful, the header claiming the contours
-> node is the bug) fold into step 3, editor/viewer depth; §2.1, §2.10, §2.11 are
-> under "Known weak spots"; §2.12 was already these Next steps.
+> **⚑ Param-to-pixel is now MEASURED, not estimated** (§2.9). `cvflow/app/
+> latency.py` times the real interval — inspector edit → viewer pixmap, both
+> ends on the GUI thread, so the 30 ms debounce, queued-signal delivery and any
+> GUI backlog are all inside the number. Engine timings alone undercount.
+> **1080p load→gray→blur→canny, offscreen, 40 edits: p50 38 ms, p95 48 ms,
+> max 53 ms** against the docs/08 budget of 100 ms — *passing with roughly 2×
+> headroom, and ~30 ms of it is the debounce.* p95 shows live in the status bar;
+> `test_param_to_pixel_latency_gate` guards it at a loose 300 ms (gross
+> regressions only, no CI flake). Caveat: offscreen, so it excludes real
+> compositing/vsync — the CPU path is identical, but re-measure on a real
+> display before declaring the exit criterion met.
 
-1. **Measure param-to-pixel latency** (CODE_REVIEW §2.9) — docs/08 makes
-   *measured p95 < 100 ms at 1080p* a Phase-1 exit criterion, and it has never
-   been measured, only estimated. Timestamp in `InspectorPanel.paramEdited`,
-   carry an edit-id through `ExecutionController`, log the delta when the viewer
-   sets its pixmap, surface p95 in the status bar. Cheap, always-on, and worth
-   having in place *before* the node count grows and a slow node appears.
-2. **Broaden node packs toward the MVP ~35** (docs/08 Phase 1) — 11 done; still
+1. **Broaden node packs toward the MVP ~35** (docs/08 Phase 1) — 11 done; still
    want: in-range colour mask, crop-ROI (with pick-in-viewer RectParam), rotate/
    flip/warp/perspective, median/bilateral/box/unsharp, Sobel/Laplacian, filter-
    contours + bounding boxes + connected components + Hough + template match,
    statistics, draw boxes/text/mask-blend, switch/math util, **custom Script node**
    (editor dialog). Pure SDK work; each needs a `tests/test_nodes.py` test.
-3. **Editor depth** (docs/05 §2.2): dependency highlight on selection, node bypass
-   (`D`), backdrops/reroutes, heat overlay, thumbnails-on-node, **structural undo**
-   (`QUndoCommand`s for add/remove/connect — deviation #8).
-4. **Viewer depth** (docs/05 §2.4): GL texture path (deviation #9), 2×2 layout +
-   linked compare + wipe, histogram/false-colour LUT, Data-inspector tree panel.
-5. **Video File node in seekable-scrub mode** (frame slider) — the last Phase-1
+2. **Editor + viewer depth** (docs/05 §2.2, §2.4): dependency highlight on
+   selection, node bypass (`D`), backdrops/reroutes, heat overlay,
+   thumbnails-on-node, **structural undo** (`QUndoCommand`s for
+   add/remove/connect — deviation #8); GL texture path (deviation #9), 2×2
+   layout + linked compare + wipe, histogram/false-colour LUT, Data-inspector
+   tree panel. Folded in here: CODE_REVIEW §2.2 (confirm in the status bar that
+   an armed run saved, and that a re-armed retry happened) and §2.3 (a viewer
+   switched to a `ContourSet` node keeps the previous node's pixels while the
+   header names the contours node — contours-over-source is genuinely useful,
+   the mislabelling is the bug).
+3. **Video File node in seekable-scrub mode** (frame slider) — the last Phase-1
    source type before live streaming (Phase 2).
-6. **Persistence polish:** restore docks/viewers/pins from the workflow `ui`
+4. **Persistence polish:** restore docks/viewers/pins from the workflow `ui`
    section on open (write path exists — `_collect_ui`); autosave + kill-9 recovery.
-7. **CI** — GitHub Actions matrix (Windows + Linux), `pytest` (now includes the
+5. **CI** — GitHub Actions matrix (Windows + Linux), `pytest` (now includes the
    offscreen GUI smoke suite via `QT_QPA_PLATFORM=offscreen`) + the benchmark gate.
    Local git is done; this now only needs a GitHub remote + push.
-8. Phase 1 exit per docs/08: rebuild three real past experiments faster than their
-   script versions; param-to-pixel p95 < 100 ms at 1080p; save/reopen restores
-   graph + viewers exactly.
+6. Phase 1 exit per docs/08: rebuild three real past experiments faster than their
+   script versions; **param-to-pixel p95 < 100 ms at 1080p — measured, 48 ms
+   (see above); re-confirm on a real display**; save/reopen restores graph +
+   viewers exactly.
 
 ## Known weak spots (honest list)
 

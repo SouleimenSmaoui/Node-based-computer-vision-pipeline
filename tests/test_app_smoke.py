@@ -101,6 +101,124 @@ def test_inspector_builds_widgets_from_specs(qapp):
     assert set(panel._widgets) == {p.name for p in inst.spec.params}
 
 
+# ---- param-to-pixel latency probe — CODE_REVIEW §2.9 -----------------------
+
+
+def test_latency_probe_records_measures_and_summarises(qapp):
+    from cvflow.app.latency import LatencyProbe
+
+    probe = LatencyProbe()
+    assert probe.measure() is None  # nothing pending
+    assert probe.summary() == ""
+
+    probe.mark_edit()
+    ms = probe.measure()
+    assert ms is not None and ms >= 0
+    assert probe.count == 1
+    assert probe.measure() is None  # consumed, so never counted twice
+    assert "p95" in probe.summary()
+
+
+def test_latency_probe_charges_the_newest_edit(qapp):
+    """A burst of slider ticks collapses into one launch, so the frame that
+    lands reflects the newest edit; charging it to the oldest would report a
+    latency the pipeline never had."""
+    from cvflow.app.latency import LatencyProbe
+
+    probe = LatencyProbe()
+    probe._clock = lambda: 0.0
+    probe.mark_edit()               # an early tick...
+    probe._clock = lambda: 1.0
+    probe.mark_edit()               # ...superseded before any run started
+    probe._clock = lambda: 1.5
+    assert probe.measure() == pytest.approx(500.0)
+
+
+def test_latency_probe_discards_edits_that_never_repaint(qapp):
+    from cvflow.app.latency import LatencyProbe
+
+    probe = LatencyProbe()
+    probe.mark_edit()
+    probe.discard_pending()
+    assert probe.measure() is None
+    assert probe.count == 0
+
+
+def test_latency_percentile_is_nearest_rank(qapp):
+    from cvflow.app.latency import LatencyProbe
+
+    probe = LatencyProbe()
+    probe._samples.extend([10.0, 20.0, 30.0, 40.0, 100.0])
+    assert probe.percentile(95) == 100.0   # every value returned is a real sample
+    assert probe.percentile(50) == 30.0
+    assert probe.percentile(1) == 10.0
+
+
+def test_param_edit_produces_a_latency_sample(window, qapp):
+    """End to end: the probe's start-line is the inspector edit and its
+    stop-line is the viewer's pixmap, so this fails if the wiring is dropped."""
+    reports = []
+    window.open_workflow(str(DEMO))
+    window.session.controller.reportReady.connect(reports.append)
+    assert _wait_for(qapp, lambda: bool(reports))
+
+    assert window.latency.count == 0, "opening a workflow is not a param edit"
+
+    window.inspector.paramEdited.emit("canny", "low", 25)
+    assert _wait_for(qapp, lambda: window.latency.count > 0), "no latency sample"
+    assert window.latency.percentile(95) > 0
+    assert "p95" in window._status_latency.text()
+
+
+def test_param_to_pixel_latency_gate(window, qapp, tmp_path):
+    """docs/08's Phase-1 exit criterion, measured instead of estimated.
+
+    The budget here is deliberately far looser than the 100 ms target so CI
+    variance cannot flake it: this exists to catch a *gross* regression — a
+    full-resolution copy landing on the GUI thread, a lost cache, a dropped
+    debounce — not to certify the criterion. The certifying number is measured
+    deliberately and recorded in STATUS.md (p95 48 ms at 1080p, 2026-07-25).
+    """
+    import cv2
+    from cvflow.core.graph import Graph
+    from cvflow.io.workflow_json import save_workflow
+    from cvflow.plugins import builtin_registry
+
+    rng = np.random.default_rng(7)
+    src = tmp_path / "hd.png"
+    cv2.imwrite(str(src), rng.integers(0, 255, (1080, 1920, 3), dtype=np.uint8))
+
+    reg, _ = builtin_registry()
+    graph = Graph()
+    graph.add_node(reg.get("cvflow.io.load_image"), node_id="load",
+                   params={"path": str(src)})
+    graph.add_node(reg.get("cvflow.color.to_gray"), node_id="gray")
+    graph.add_node(reg.get("cvflow.filters.gaussian_blur"), node_id="blur")
+    graph.add_node(reg.get("cvflow.edges.canny"), node_id="canny")
+    graph.connect("load", "image", "gray", "image")
+    graph.connect("gray", "out", "blur", "image")
+    graph.connect("blur", "out", "canny", "image")
+    wf = tmp_path / "hd.cvflow.json"
+    save_workflow(graph, wf)
+
+    window.open_workflow(str(wf))
+    assert _wait_for(qapp, lambda: window.viewer_a.node_id == "canny", 15000)
+    assert _wait_for(
+        qapp, lambda: not window.viewer_a.canvas._pixmap.pixmap().isNull(), 15000)
+    window.latency.reset()  # the cold open is not a tuning edit
+
+    for i in range(12):
+        before = window.latency.count
+        window.inspector.paramEdited.emit("canny", "low", 20 + i * 3)
+        assert _wait_for(qapp, lambda: window.latency.count > before, 15000), (
+            f"edit {i} never reached the viewer")
+
+    p95 = window.latency.percentile(95)
+    assert p95 is not None and p95 < 300.0, (
+        f"param-to-pixel p95 regressed to {p95:.0f} ms at 1080p "
+        f"(samples: {sorted(window.latency._samples)})")
+
+
 def test_unknown_param_spec_falls_back_to_string_editor(qapp):
     """CODE_REVIEW §2.7 — a hint-keyed fallback table routed
     ``widget_hint="slider"`` to the int editor, so any third-party ParamSpec

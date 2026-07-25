@@ -17,6 +17,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from cvflow.app.graphview import GraphScene, GraphView, NodePalette
 from cvflow.app.inspector import InspectorPanel
+from cvflow.app.latency import LatencyProbe
 from cvflow.app.panels import ConsolePanel, ErrorsPanel, ProfilerPanel, QtLogHandler
 from cvflow.app.session import WorkflowSession
 from cvflow.app.viewer import ImageView
@@ -39,6 +40,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.registry, failures = builtin_registry()
         self._log_handler: Optional[QtLogHandler] = None
+        self.latency = LatencyProbe()   # docs/08 param-to-pixel exit criterion
         self.session: Optional[WorkflowSession] = None
         self.scene: Optional[GraphScene] = None
         self.view: Optional[GraphView] = None
@@ -99,6 +101,11 @@ class MainWindow(QtWidgets.QMainWindow):
                              QtCore.Qt.Orientation.Vertical)
 
         self._status = self.statusBar()
+        self._status_latency = QtWidgets.QLabel("")
+        self._status_latency.setToolTip(
+            "Time from a parameter edit to the viewer showing it — debounce, "
+            "engine run, and repaint included (docs/08 targets p95 < 100 ms).")
+        self._status.addPermanentWidget(self._status_latency)
         self._status_totals = QtWidgets.QLabel("ready")
         self._status.addPermanentWidget(self._status_totals)
 
@@ -261,15 +268,18 @@ class MainWindow(QtWidgets.QMainWindow):
         observed = {v.node_id for v in (self.viewer_a, self.viewer_b) if v.node_id}
         self.session.controller.set_observed(observed)
 
-    def _show_primary(self, viewer: ImageView, node_id: str, outputs: dict[str, Any]) -> None:
+    def _show_primary(self, viewer: ImageView, node_id: str,
+                      outputs: dict[str, Any]) -> bool:
+        """Returns whether a pixmap was actually shown (the latency stop-line)."""
         inst = self.session.graph.nodes.get(node_id)
         if inst is None or not outputs:
-            return
+            return False
         port = self._primary_port(inst, outputs)
         if port is None:
-            return
+            return False
         label = f"{inst.label}·{port}"
         viewer.show_output(node_id, label, outputs[port])
+        return True
 
     @staticmethod
     def _primary_port(inst, outputs: dict[str, Any]) -> Optional[str]:
@@ -305,11 +315,22 @@ class MainWindow(QtWidgets.QMainWindow):
         self.inspector.update_status(node_id, metrics)
 
     def _on_outputs(self, node_id: str, outputs: dict[str, Any]) -> None:
+        shown = False
         for viewer in (self.viewer_a, self.viewer_b):
             if viewer.node_id == node_id:
-                self._show_primary(viewer, node_id, outputs)
+                shown |= self._show_primary(viewer, node_id, outputs)
+        if shown:
+            ms = self.latency.measure()
+            if ms is not None:
+                log.debug("param→pixel %.1f ms (%s)", ms, node_id)
+                self._status_latency.setText(self.latency.summary())
 
     def _on_report(self, report: RunReport) -> None:
+        # The run finished without repainting anything the user is watching, so
+        # there is no frame to charge this edit against; drop it rather than let
+        # it land on some later, unrelated update. Output signals for this run
+        # are already delivered by now — both are queued to this thread in order.
+        self.latency.discard_pending()
         hits = report.cache.hits
         total = hits + report.cache.misses
         state = "ok" if report.ok else "FAILED"
@@ -323,6 +344,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     # ---- inspector callbacks ----------------------------------------------
     def _on_param_edited(self, node_id: str, name: str, value: Any) -> None:
+        self.latency.mark_edit()   # start-line: the edit as the user made it
         self.session.set_param_live(node_id, name, value)
 
     def _on_param_committed(self, node_id: str, name: str, old: Any, new: Any) -> None:

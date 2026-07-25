@@ -23,6 +23,7 @@ Install the GUI dependency (PySide6 only): `pip install -e .[app]`.
 | `theme.py` | dark QSS palette, Okabe-Ito category colours, wire/status colours |
 | `imaging.py` | `ImageBuffer → QImage` (range-aware normalization, channel isolation) |
 | `session.py` | `WorkflowSession` — graph + controller + path/dirty + undo stack |
+| `latency.py` | `LatencyProbe` — param-to-pixel measurement (docs/08 exit criterion); Qt-free |
 | `controllers/execution_controller.py` | debounced, superseding, threaded client of `ExecutionService` |
 | `viewer/image_view.py` | `ImageView` — zoom/pan/probe, channel/normalize, contour overlay |
 | `inspector/` | auto-generated parameter editors from `ParamSpec`s |
@@ -46,6 +47,29 @@ Because params + external state live inside the fingerprint, only the affected
 suffix re-executes; upstream is served from cache. A newer edit cancels the
 in-flight run via a `CancellationToken` (latest-wins). The GUI thread never
 blocks on the engine.
+
+### Measuring it (`latency.py`, CODE_REVIEW §2.9)
+
+docs/08 gates Phase 1 on *measured* param-to-pixel p95 < 100 ms at 1080p, so
+`LatencyProbe` measures it always-on and shows p95 in the status bar.
+
+Both ends sit on the **GUI thread** — `mark_edit()` in `_on_param_edited`,
+`measure()` in `_on_outputs` once a viewer has actually set a pixmap. That is
+deliberate: engine timings undercount, because they exclude the 30 ms debounce
+before the run, the queued-signal delivery after it, and any GUI-thread backlog.
+The user waits through all of those. Rules that follow:
+
+- **Newest edit wins.** A run cannot reflect an edit made after it started, and a
+  slider burst collapses into one launch — charging a frame to the oldest queued
+  edit would report a latency the pipeline never had.
+- **Edits that repaint nothing are discarded** in `_on_report`, or the timestamp
+  would survive to be charged against a later, unrelated frame.
+
+Measured 2026-07-25 at 1080p (load→gray→blur→canny, offscreen, 40 edits):
+**p50 38 ms, p95 48 ms, max 53 ms** — inside the 100 ms budget, and ~30 ms of it
+is the debounce. `tests/test_app_smoke.py::test_param_to_pixel_latency_gate`
+guards this with a deliberately loose 300 ms budget; it catches gross
+regressions without flaking on CI variance.
 
 ### Threading rules this loop depends on (CODE_REVIEW §1.1–§1.2, fixed 2026-07-25)
 

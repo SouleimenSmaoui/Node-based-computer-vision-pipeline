@@ -282,9 +282,13 @@ def category_color(category: str) -> QtGui.QColor:
       covered every real case.)*
 - [x] §2 items 1–3, 9–12 triaged into STATUS.md "Next steps" / "Known weak spots".
       *§2.1, §2.10, §2.11 → "Known weak spots" (§2.1's over-optimistic comment
-      corrected; it lived in the module docstring, not `mutate()`'s). §2.9 →
-      "Next steps" item 1. §2.2, §2.3 → "Next steps" item 3. §2.12 was already
-      tracked there.*
+      corrected; it lived in the module docstring, not `mutate()`'s). §2.2, §2.3
+      → "Next steps" item 2. §2.12 was already tracked there.*
+- [x] **§2.9 implemented, not just triaged** — `cvflow/app/latency.py`, both ends
+      on the GUI thread so the debounce and signal delivery are inside the
+      number. **Measured 1080p: p50 38 ms, p95 48 ms, max 53 ms** vs the 100 ms
+      budget. This moves a docs/08 Phase-1 exit criterion from *estimated* to
+      *measured*; still offscreen, so re-confirm on a real display.
 - [x] STATUS.md + touched package READMEs updated (owner's standing documentation duty).
       *`cvflow/engine/README.md` (params-snapshot invariant),
       `cvflow/app/README.md` (threading rules the interactive loop depends on).*
