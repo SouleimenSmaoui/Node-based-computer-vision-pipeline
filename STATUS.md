@@ -1,7 +1,7 @@
 # STATUS — where the project stands and what comes next
 
 > Keep this file truthful. Update it at the end of every work session.
-> Last updated: **2026-07-07** (session 3 — Phase 1 GUI core + node pack)
+> Last updated: **2026-07-25** (session 4 — repo under git; see Next steps)
 
 ## Phase position (see docs/08-roadmap.md)
 
@@ -74,8 +74,27 @@ These are *intentional*; if you change one, update the relevant doc.
 
 ## Next steps (in order)
 
-1. **`git init` + initial commit** — needs owner go-ahead (still not a git repo;
-   docs + code + tests are all uncommitted files on disk).
+> **Under git since 2026-07-25** (session 4): branch `main`, initial commit
+> `b9092ed` = the whole tree at 80 tests green. `.gitignore` excludes `.venv/`,
+> `__pycache__`, `.pytest_cache`, `*.egg-info`, `.claude/settings.local.json` and
+> the `examples/out/` sink output; `examples/assets/sample.png` **is** tracked so
+> a fresh clone can run the demo. `.gitattributes` pins `eol=lf` so a Windows
+> checkout doesn't rewrite every file. No remote yet — that gates CI (step 7).
+
+1. **Fix the three critical findings in [CODE_REVIEW.md](CODE_REVIEW.md) §1** —
+   re-verified present in the committed tree on 2026-07-25: **§1.1** cache
+   poisoning (`engine/cache.py:22` — `node_fingerprint` still takes no `params`
+   snapshot, so params are read twice per node while the GUI mutates them);
+   **§1.2** armed "Run" silently dropped (`app/controllers/execution_controller.py:90`
+   publishes `_armed` outside `_cond`; `:151-154` discards a superseded report
+   without re-arming the sinks); **§1.3** profiler sorts formatted strings
+   lexicographically (`app/panels/profiler.py:49,67`). Patches are written out in
+   CODE_REVIEW §3; each fix needs a regression test. **Do this before growing the
+   node packs** — §1.1 surfaces as a *stale image after undo / sliding a param
+   back*, silent and sticky, and every added node multiplies the cache entries
+   you'd have to search to find it. Then CODE_REVIEW §2 items 4–8 (small,
+   low-risk; #8 is a real node bug — `Resize` interpolates `BINARY` images and
+   keeps the `BINARY` label).
 2. **Broaden node packs toward the MVP ~35** (docs/08 Phase 1) — 11 done; still
    want: in-range colour mask, crop-ROI (with pick-in-viewer RectParam), rotate/
    flip/warp/perspective, median/bilateral/box/unsharp, Sobel/Laplacian, filter-
@@ -92,8 +111,8 @@ These are *intentional*; if you change one, update the relevant doc.
 6. **Persistence polish:** restore docks/viewers/pins from the workflow `ui`
    section on open (write path exists — `_collect_ui`); autosave + kill-9 recovery.
 7. **CI** — GitHub Actions matrix (Windows + Linux), `pytest` (now includes the
-   offscreen GUI smoke suite via `QT_QPA_PLATFORM=offscreen`) + the benchmark gate
-   (after the repo is on git/GitHub).
+   offscreen GUI smoke suite via `QT_QPA_PLATFORM=offscreen`) + the benchmark gate.
+   Local git is done; this now only needs a GitHub remote + push.
 8. Phase 1 exit per docs/08: rebuild three real past experiments faster than their
    script versions; param-to-pixel p95 < 100 ms at 1080p; save/reopen restores
    graph + viewers exactly.
