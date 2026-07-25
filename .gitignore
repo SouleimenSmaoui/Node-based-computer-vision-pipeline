@@ -1,0 +1,18 @@
+# Virtual environment (recreate with: python -m venv .venv; pip install -e .[app])
+.venv/
+
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Editable-install / build artifacts
+*.egg-info/
+build/
+dist/
+
+# Machine-specific Claude Code settings (shared settings.json would be tracked)
+.claude/settings.local.json
+
+# Written at runtime by the demo workflow's Save Image sink
+examples/out/

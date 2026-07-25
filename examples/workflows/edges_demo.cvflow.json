@@ -1,0 +1,121 @@
+{
+  "format": "cvflow-workflow",
+  "schema_version": 1,
+  "metadata": {
+    "title": "Edge detection demo",
+    "description": "load \u2192 gray \u2192 blur \u2192 canny \u2192 save",
+    "created": "2026-06-12T20:49:37Z",
+    "modified": "2026-06-12T20:49:37Z"
+  },
+  "graph": {
+    "nodes": [
+      {
+        "id": "load",
+        "type": "cvflow.io.load_image",
+        "version": "1.0",
+        "pos": [
+          -460,
+          0
+        ],
+        "params": {
+          "path": "../assets/sample.png",
+          "color": "BGR"
+        }
+      },
+      {
+        "id": "gray",
+        "type": "cvflow.color.to_gray",
+        "version": "1.0",
+        "pos": [
+          -230,
+          0
+        ],
+        "params": {}
+      },
+      {
+        "id": "blur",
+        "type": "cvflow.filters.gaussian_blur",
+        "version": "1.0",
+        "pos": [
+          0,
+          0
+        ],
+        "params": {
+          "kernel": 5,
+          "sigma": 1.2
+        }
+      },
+      {
+        "id": "canny",
+        "type": "cvflow.edges.canny",
+        "version": "1.0",
+        "pos": [
+          230,
+          0
+        ],
+        "params": {
+          "low": 60,
+          "high": 160,
+          "aperture": "3",
+          "l2": false
+        }
+      },
+      {
+        "id": "save",
+        "type": "cvflow.io.save_image",
+        "version": "1.0",
+        "pos": [
+          460,
+          0
+        ],
+        "params": {
+          "path": "../out/edges.png",
+          "make_dirs": true
+        }
+      }
+    ],
+    "edges": [
+      {
+        "from": [
+          "load",
+          "image"
+        ],
+        "to": [
+          "gray",
+          "image"
+        ]
+      },
+      {
+        "from": [
+          "gray",
+          "out"
+        ],
+        "to": [
+          "blur",
+          "image"
+        ]
+      },
+      {
+        "from": [
+          "blur",
+          "out"
+        ],
+        "to": [
+          "canny",
+          "image"
+        ]
+      },
+      {
+        "from": [
+          "canny",
+          "edges"
+        ],
+        "to": [
+          "save",
+          "image"
+        ]
+      }
+    ]
+  },
+  "ui": {}
+}

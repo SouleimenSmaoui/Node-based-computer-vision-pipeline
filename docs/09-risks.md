@@ -1,0 +1,29 @@
+# 09 — Risk Register & Mitigations
+
+Scored L/M/H for likelihood × impact. "Trigger" = the observable signal that the risk is
+materializing, so it gets caught by monitoring, not by post-mortem.
+
+| # | Risk | L | I | Mitigation | Trigger / early warning |
+|---|------|---|---|------------|--------------------------|
+| R1 | **Scope creep** — this product is four products (editor, engine, viewer, plugin ecosystem); unbounded scope kills it before usefulness | H | H | Phase gates with written exit criteria (docs/08); non-goals codified (docs/01 §1.4); every feature request lands in a backlog mapped to a phase, never into the current one; dogfood gate forces "useful now" over "complete later" | Phase 1 running > 12 weeks; backlog items leaking into current milestone |
+| R2 | **Python GIL / soft-real-time ceiling** — pure-Python nodes serialize; users expect "real-time" | M | M | OpenCV releases the GIL (parallel native branches); strict frame-drop policy with visible drop counters (honesty beats stutter); per-frame plan compiled once; Phase 3 process-pool lane with shared-memory arrays; set expectation explicitly: *soft* real time (N4) | Stream HUD shows sustained drops on reference pipeline; profiler shows Python-bound node > 30 % of frame budget |
+| R3 | **NodeGraphQt dependency decay** (effectively single-maintainer) | M | H | All access through `GraphViewPort` adapter (docs/01 §7.3); no NodeGraphQt types outside `app/graphview/`; pinned version + vendored fork readiness; bespoke-editor replacement is a budgeted Phase 3 option, not an emergency | Upstream silent > 6 months on a blocking bug; needed feature requires forking internals |
+| R4 | **Cache memory blowups** — 20 MP float pipelines × history = OOM | M | H | Byte-accounted LRU with hard budget (default 2 GB) + pinned-view exemption; `nbytes` mandatory on all types; proxy mode cuts working set ~16×; memory readout in status bar; soak tests with tracemalloc in CI | Cache evictions per run > hits; OS swap during dogfood |
+| R5 | **Latency target (N1) missed** — the product promise itself | M | H | Budget enforced by benchmark in CI from Phase 0; debounce+supersede design (docs/02 §4); proxy mode as pressure valve; profiler makes regressions attributable per node | CI perf gate fails; p95 in RunReports > 100 ms on reference workflow |
+| R6 | **Industrial camera fragmentation** — every vendor SDK is its own world | H | M | GenICam/GenTL standard first (Harvesters) covers most industrial cameras; vendor SDKs as optional plugins (pypylon reference implementation); `StreamSource` interface keeps engine vendor-agnostic; buy/borrow test hardware before Phase 3 commits | Harvesters producer setup fails on target camera in spike test |
+| R7 | **Packaging pain** — Qt+OpenCV+NumPy via PyInstaller: size, antivirus false positives, missing DLLs | H | M | Packaging spike early in Phase 2 (not at release); code-sign Windows builds; CI builds installers every commit so breakage is caught at the commit that caused it; fallback distribution: pipx/uv instructions for dev-savvy users | Installer CI red; AV vendor flags build |
+| R8 | **Plugin/script code is arbitrary code execution** — a shared workflow could carry a malicious script node | M | M | Trust model documented (docs/04 §2): consent dialog before executing script nodes from newly opened foreign files; plugins folder is user-controlled; no claim of sandboxing anywhere in docs/UI; (true sandboxing rejected: subprocess isolation breaks zero-copy and is bypassable — honesty over theater) | — (policy risk; review at 1.0) |
+| R9 | **Plugin API churn** breaking user nodes after 1.0 | M | H | SDK facade is the only public surface; API frozen at 1.0 with semver + 2-minor deprecation window (N10); conformance sweep doubles as compatibility test; example plugin built in CI against head | Example-plugin CI fails on a core refactor |
+| R10 | **GPU expectations vs `opencv-python` reality** (wheels ship without CUDA) | H | M | Strategy documented up front (docs/01 §7.8): GPU through onnxruntime-gpu (ML) + optional CuPy pack; never promise CUDA classic-CV without custom builds; node docs state CPU/GPU per node | User reports "GPU unused" on classic-CV pipelines (expectation, not bug — answer in FAQ) |
+| R11 | **Cross-platform drift** (Windows-first development) | M | M | Linux+Windows CI from Phase 0, macOS from Phase 2; no platform-specific paths outside `platformdirs`; camera backends abstracted in `StreamSource` (MSMF/DirectShow vs V4L2) | Platform-specific test failures accumulate |
+| R12 | **Single-developer bus factor / motivation cliff** | M | H | This documentation set (rebuildable by another engineer); boring-technology choices; phase exits produce usable tools early (motivation is fed by dogfooding wins); tests encode intent | Velocity stalls two sprints running |
+| R13 | **OpenCV version behavior drift** (e.g., findContours signature changes, algorithm output diffs) | M | L | Pin minor version per release; golden-image regression suite runs against pinned + latest in CI; adapter shims in one module (`nodes/_cv_compat.py`) | Golden suite diff on latest-OpenCV CI lane |
+| R14 | **Undo/document-consistency bugs** (graph, engine, and view disagree after exotic edit sequences) | M | M | Single source of truth: core `Graph` document; view and engine are derived observers (docs/07 §5); command-pattern edits only; property-based tests (hypothesis) over random edit/undo sequences asserting view==model==engine topology | Badge/wire ghosts reported in dogfooding |
+
+## Top three, called out
+
+**R1 scope** is the existential one — the mitigation that actually works is the
+dogfood-gated phase plan, which converts "wouldn't it be nice" into "after I ship this
+gate". **R3 NodeGraphQt** and **R5 latency** are the two technical bets; both have
+engineered escape hatches (adapter swap; proxy mode) that were designed *into* the
+architecture rather than hoped about.

@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cvflow"
+version = "0.1.0"
+description = "Visual computer-vision workflow builder: headless core, DAG engine, node SDK"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Souleimen Smaoui" }]
+dependencies = [
+    "numpy>=1.26",
+    "opencv-python>=4.9",
+]
+
+[project.optional-dependencies]
+# Phase 1 GUI. Bespoke QGraphicsView editor (docs/01 §7.3) → PySide6 only, no
+# NodeGraphQt/superqt/qtawesome (no verified Python-3.14 support). See STATUS.md.
+app = ["PySide6>=6.10"]
+dev = ["pytest>=8", "ruff>=0.4"]
+
+[project.scripts]
+cvflow = "cvflow.cli.main:main"
+cvflow-app = "cvflow.app.__main__:main"
+
+[project.entry-points."cvflow.nodes"]
+# Built-in nodes are loaded directly by the plugin loader; this entry point
+# exists so external plugin packages have a worked example to copy.
+builtin = "cvflow.nodes"
+
+[tool.setuptools.packages.find]
+include = ["cvflow*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

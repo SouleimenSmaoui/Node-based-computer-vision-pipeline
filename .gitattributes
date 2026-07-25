@@ -1,0 +1,6 @@
+# Keep LF in the working tree on every platform. The suite runs on Windows and
+# Linux (docs/08 Phase 1 CI), and the working copy is already LF — without this,
+# Windows autocrlf would rewrite every file on the next checkout.
+* text=auto eol=lf
+
+*.png binary
