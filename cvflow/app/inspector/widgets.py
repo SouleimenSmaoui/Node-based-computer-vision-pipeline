@@ -16,15 +16,21 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from PySide6 import QtCore, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 
+from cvflow.app.theme import TEXT_DIM
 from cvflow.core.params import (
     BoolParam,
+    CodeParam,
+    ColorParam,
     EnumParam,
     FloatParam,
     IntParam,
     ParamSpec,
     PathParam,
+    PointParam,
+    RangeParam,
+    RectParam,
     StringParam,
 )
 
@@ -247,6 +253,163 @@ class _PathWidget(ParamWidget):
         self._muted = False
 
 
+class _TupleWidget(ParamWidget):
+    """Shared base for the fixed-length numeric specs (range/point/rect).
+
+    One spin box per component, each labelled. A two-handle slider would suit
+    RangeParam better, but Qt has no native one and the GUI is PySide6-only by
+    decision (STATUS.md deviation #7) — so: honest spin boxes.
+    """
+
+    captions: tuple[str, ...] = ()
+
+    def __init__(self, spec: ParamSpec, integer: bool, decimals: int,
+                 lo: float | None, hi: float | None) -> None:
+        super().__init__(spec)
+        self._integer = integer
+        self._boxes: list[QtWidgets.QAbstractSpinBox] = []
+        row = QtWidgets.QHBoxLayout(self)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(4)
+        for caption in self.captions:
+            if caption:
+                tag = QtWidgets.QLabel(caption)
+                tag.setStyleSheet(f"color:{TEXT_DIM};")
+                row.addWidget(tag)
+            box: QtWidgets.QAbstractSpinBox
+            if integer:
+                box = QtWidgets.QSpinBox()
+                box.setRange(int(lo) if lo is not None else -1_000_000,
+                             int(hi) if hi is not None else 1_000_000)
+            else:
+                box = QtWidgets.QDoubleSpinBox()
+                box.setDecimals(decimals)
+                box.setRange(lo if lo is not None else -1e9,
+                             hi if hi is not None else 1e9)
+            box.valueChanged.connect(self._on_changed)
+            box.editingFinished.connect(
+                lambda: self._emit_committed(self._value()))
+            self._boxes.append(box)
+            row.addWidget(box, 1)
+
+    def _value(self) -> tuple:
+        return tuple(b.value() for b in self._boxes)
+
+    def _on_changed(self, _v) -> None:
+        self._emit_edited(self._value())
+
+    def set_value(self, value: Any) -> None:
+        self._muted = True
+        for box, component in zip(self._boxes, value):
+            box.setValue(int(component) if self._integer else float(component))
+        self._muted = False
+
+
+class _RangeWidget(_TupleWidget):
+    captions = ("low", "high")
+
+    def __init__(self, spec: RangeParam) -> None:
+        super().__init__(spec, spec.integer, spec.decimals, spec.min, spec.max)
+
+
+class _PointWidget(_TupleWidget):
+    captions = ("x", "y")
+
+    def __init__(self, spec: PointParam) -> None:
+        super().__init__(spec, spec.integer, spec.decimals, spec.min, spec.max)
+
+
+class _RectWidget(_TupleWidget):
+    captions = ("x", "y", "w", "h")
+
+    def __init__(self, spec: RectParam) -> None:
+        # No bounds: a rect is in image pixels and the image size is not known
+        # to the spec. Nodes clip with RectParam.clip_to() at execution time.
+        super().__init__(spec, spec.integer, spec.decimals, None, None)
+
+
+class _ColorWidget(ParamWidget):
+    """Swatch button opening a colour dialog. Values are stored **BGR** to
+    match OpenCV; Qt speaks RGB, so the two are swapped at this boundary and
+    nowhere else."""
+
+    def __init__(self, spec: ColorParam) -> None:
+        super().__init__(spec)
+        self._spec_color: ColorParam = spec
+        self._value: tuple = tuple(spec.default)
+        self.button = QtWidgets.QPushButton()
+        self.button.setFixedHeight(22)
+        self.button.clicked.connect(self._pick)
+        row = QtWidgets.QHBoxLayout(self)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.addWidget(self.button, 1)
+        self._paint()
+
+    def _qcolor(self) -> QtGui.QColor:
+        b, g, r = self._value[:3]
+        alpha = self._value[3] if len(self._value) > 3 else 255
+        return QtGui.QColor(int(r), int(g), int(b), int(alpha))
+
+    def _paint(self) -> None:
+        c = self._qcolor()
+        # Contrasting text so the hex stays readable on any swatch.
+        fg = "#000000" if c.lightness() > 127 else "#ffffff"
+        self.button.setStyleSheet(
+            f"background:{c.name()}; color:{fg}; border:1px solid #555;")
+        self.button.setText(c.name().upper())
+
+    def _pick(self) -> None:
+        options = QtWidgets.QColorDialog.ColorDialogOption.ShowAlphaChannel \
+            if self._spec_color.with_alpha \
+            else QtWidgets.QColorDialog.ColorDialogOption(0)
+        chosen = QtWidgets.QColorDialog.getColor(
+            self._qcolor(), self, self.spec.label, options)
+        if not chosen.isValid():
+            return
+        value = (chosen.blue(), chosen.green(), chosen.red())
+        if self._spec_color.with_alpha:
+            value = value + (chosen.alpha(),)
+        self._value = value
+        self._paint()
+        self._emit_edited(value)
+        self._emit_committed(value)
+
+    def set_value(self, value: Any) -> None:
+        self._muted = True
+        self._value = tuple(value)
+        self._paint()
+        self._muted = False
+
+
+class _CodeWidget(ParamWidget):
+    """Multi-line source editor. Commits on focus-out rather than per keystroke:
+    running half-typed code on every character would be noise at best."""
+
+    def __init__(self, spec: CodeParam) -> None:
+        super().__init__(spec)
+        self.edit = QtWidgets.QPlainTextEdit()
+        self.edit.setTabChangesFocus(False)
+        self.edit.setMinimumHeight(120)
+        font = QtGui.QFontDatabase.systemFont(
+            QtGui.QFontDatabase.SystemFont.FixedFont)
+        self.edit.setFont(font)
+        row = QtWidgets.QVBoxLayout(self)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.addWidget(self.edit)
+        self.edit.textChanged.connect(
+            lambda: self._emit_edited(self.edit.toPlainText()))
+
+    def focusOutEvent(self, event: QtGui.QFocusEvent) -> None:
+        self._emit_committed(self.edit.toPlainText())
+        super().focusOutEvent(event)
+
+    def set_value(self, value: Any) -> None:
+        self._muted = True
+        if self.edit.toPlainText() != str(value):
+            self.edit.setPlainText(str(value))
+        self._muted = False
+
+
 def build_param_widget(spec: ParamSpec) -> ParamWidget:
     """Instantiate the right editor for a parameter spec.
 
@@ -257,8 +420,19 @@ def build_param_widget(spec: ParamSpec) -> ParamWidget:
     always gets the string editor: degraded, but it renders and edits
     (CODE_REVIEW §2.7).
     """
+    # Subclasses before their bases: PathParam and CodeParam are StringParams.
     if isinstance(spec, PathParam):
         return _PathWidget(spec)
+    if isinstance(spec, CodeParam):
+        return _CodeWidget(spec)
+    if isinstance(spec, RangeParam):
+        return _RangeWidget(spec)
+    if isinstance(spec, PointParam):
+        return _PointWidget(spec)
+    if isinstance(spec, RectParam):
+        return _RectWidget(spec)
+    if isinstance(spec, ColorParam):
+        return _ColorWidget(spec)
     if isinstance(spec, IntParam):
         return _IntWidget(spec)
     if isinstance(spec, FloatParam):

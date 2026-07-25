@@ -10,11 +10,16 @@ from cvflow.core.errors import NodeExecutionError, ParamError
 from cvflow.core.node import Issue, Node, NodeSpec, node
 from cvflow.core.params import (
     BoolParam,
+    CodeParam,
+    ColorParam,
     EnumParam,
     FloatParam,
     IntParam,
     ParamSpec,
     PathParam,
+    PointParam,
+    RangeParam,
+    RectParam,
     StringParam,
 )
 from cvflow.core.ports import (
@@ -46,6 +51,7 @@ __all__ = [
     # params
     "ParamSpec", "IntParam", "FloatParam", "BoolParam", "EnumParam",
     "StringParam", "PathParam",
+    "RangeParam", "PointParam", "RectParam", "ColorParam", "CodeParam",
     # types
     "ImageBuffer", "ColorSpace", "ValueRange", "ContourSet",
     # helpers

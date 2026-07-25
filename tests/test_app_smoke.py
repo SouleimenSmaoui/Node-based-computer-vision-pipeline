@@ -219,6 +219,74 @@ def test_param_to_pixel_latency_gate(window, qapp, tmp_path):
         f"(samples: {sorted(window.latency._samples)})")
 
 
+def test_new_param_specs_build_their_own_widgets(qapp):
+    """The five specs added for crop-ROI / draw / script must each get a real
+    editor, not silently fall through to the string box."""
+    from cvflow.app.inspector.widgets import (
+        _CodeWidget,
+        _ColorWidget,
+        _PointWidget,
+        _RangeWidget,
+        _RectWidget,
+        _StringWidget,
+        build_param_widget,
+    )
+    from cvflow.core.params import (
+        CodeParam,
+        ColorParam,
+        PointParam,
+        RangeParam,
+        RectParam,
+    )
+
+    cases = [
+        (RangeParam("Area", default=(0.0, 10.0)), _RangeWidget, 2),
+        (PointParam("Seed"), _PointWidget, 2),
+        (RectParam("ROI"), _RectWidget, 4),
+        (ColorParam("Colour"), _ColorWidget, 0),
+        (CodeParam("Script", default="x = 1"), _CodeWidget, 0),
+    ]
+    for spec, expected, boxes in cases:
+        spec.__set_name__(object, "p")
+        widget = build_param_widget(spec)
+        assert isinstance(widget, expected), f"{type(spec).__name__} -> {widget}"
+        assert not isinstance(widget, _StringWidget)
+        if boxes:
+            assert len(widget._boxes) == boxes
+
+
+def test_tuple_widgets_round_trip_values_without_emitting(qapp):
+    from cvflow.app.inspector.widgets import build_param_widget
+    from cvflow.core.params import RectParam
+
+    spec = RectParam("ROI")
+    spec.__set_name__(object, "roi")
+    widget = build_param_widget(spec)
+
+    edits = []
+    widget.edited.connect(edits.append)
+    widget.set_value((5, 10, 40, 30))
+    assert widget._value() == (5, 10, 40, 30)
+    assert not edits, "set_value must reflect state, not re-emit an edit"
+
+
+def test_color_widget_keeps_bgr_order(qapp):
+    """Values are stored BGR for OpenCV; Qt is RGB. The swap lives in the
+    widget and must not leak into the stored value."""
+    from cvflow.app.inspector.widgets import build_param_widget
+    from cvflow.core.params import ColorParam
+
+    spec = ColorParam("Colour", default=(0, 0, 255))  # BGR red
+    spec.__set_name__(object, "colour")
+    widget = build_param_widget(spec)
+    assert widget._qcolor().red() == 255
+    assert widget._qcolor().blue() == 0
+
+    widget.set_value((255, 0, 0))  # BGR blue
+    assert widget._qcolor().blue() == 255
+    assert widget._qcolor().red() == 0
+
+
 def test_unknown_param_spec_falls_back_to_string_editor(qapp):
     """CODE_REVIEW §2.7 — a hint-keyed fallback table routed
     ``widget_hint="slider"`` to the int editor, so any third-party ParamSpec

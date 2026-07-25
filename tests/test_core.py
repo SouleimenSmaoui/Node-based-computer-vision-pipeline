@@ -4,7 +4,16 @@ import numpy as np
 import pytest
 
 from cvflow.core.errors import ConnectionTypeError, CycleError, ParamError
-from cvflow.core.params import FloatParam, IntParam, validate_params
+from cvflow.core.params import (
+    CodeParam,
+    ColorParam,
+    FloatParam,
+    IntParam,
+    PointParam,
+    RangeParam,
+    RectParam,
+    validate_params,
+)
 from cvflow.core.types.base import Coerce, Ok, PortType, Reject, check_connection
 from cvflow.core.types.image import ColorSpace, ImageBuffer
 
@@ -33,6 +42,99 @@ class TestParams:
         spec.__set_name__(object, "k")
         with pytest.raises(ParamError, match="unknown parameter"):
             validate_params([spec], {"nope": 1})
+
+
+class TestTupleParams:
+    """RangeParam / PointParam / RectParam / ColorParam / CodeParam."""
+
+    @staticmethod
+    def _named(spec, name="p"):
+        spec.__set_name__(object, name)
+        return spec
+
+    def test_range_swaps_a_crossed_band(self):
+        """Snap-to-valid, like IntParam clamping: a slider dragged past its
+        partner keeps both values rather than raising."""
+        spec = self._named(RangeParam("Area", default=(0.0, 10.0)))
+        assert spec.validate((8.0, 2.0)) == (2.0, 8.0)
+
+    def test_range_clamps_both_ends(self):
+        spec = self._named(RangeParam("Area", default=(0.0, 1.0), min=0.0, max=100.0))
+        assert spec.validate((-5.0, 500.0)) == (0.0, 100.0)
+
+    def test_range_integer_mode_rounds(self):
+        spec = self._named(RangeParam("N", default=(0, 10), integer=True))
+        assert spec.validate((1.6, 8.2)) == (2, 8)
+
+    def test_rect_normalizes_a_backwards_drag(self):
+        """Dragging up-and-left gives negative extents; normalize rather than
+        reject, so the obvious gesture just works."""
+        spec = self._named(RectParam("ROI"))
+        assert spec.validate((100, 100, -40, -30)) == (60, 70, 40, 30)
+
+    def test_rect_clip_to_image(self):
+        assert RectParam.clip_to((-10, -10, 50, 50), 100, 100) == (0, 0, 40, 40)
+        assert RectParam.clip_to((80, 80, 50, 50), 100, 100) == (80, 80, 20, 20)
+        assert RectParam.clip_to((200, 200, 10, 10), 100, 100) == (100, 100, 0, 0)
+
+    def test_color_is_bgr_and_clamped(self):
+        spec = self._named(ColorParam("Colour", default=(0, 255, 0)))
+        assert spec.validate((300, -20, 7)) == (255, 0, 7)
+        assert len(spec.validate((1, 2, 3))) == 3
+
+    def test_color_with_alpha_needs_four(self):
+        spec = self._named(ColorParam("Colour", default=(0, 0, 0, 255),
+                                      with_alpha=True))
+        assert spec.validate((1, 2, 3, 4)) == (1, 2, 3, 4)
+        with pytest.raises(ParamError):
+            spec.validate((1, 2, 3))
+
+    @pytest.mark.parametrize("spec_factory,text,expected", [
+        (lambda: RangeParam("R", default=(0.0, 1.0)), "2,8", (2.0, 8.0)),
+        (lambda: RangeParam("R", default=(0.0, 1.0)), "2:8", (2.0, 8.0)),
+        (lambda: PointParam("P"), "10,20", (10, 20)),
+        (lambda: RectParam("R"), "1,2,3,4", (1, 2, 3, 4)),
+        (lambda: ColorParam("C"), "10,20,30", (10, 20, 30)),
+    ])
+    def test_cli_parse(self, spec_factory, text, expected):
+        """`cvflow run --set node.roi=1,2,3,4` has to work for these too."""
+        assert self._named(spec_factory()).parse(text) == expected
+
+    def test_parse_rejects_wrong_arity(self):
+        spec = self._named(RectParam("R"))
+        with pytest.raises(ParamError):
+            spec.parse("1,2,3")
+
+    @pytest.mark.parametrize("spec_factory,value", [
+        (lambda: RangeParam("R", default=(0.0, 1.0)), (2.0, 8.0)),
+        (lambda: PointParam("P"), (10, 20)),
+        (lambda: RectParam("R"), (1, 2, 3, 4)),
+        (lambda: ColorParam("C"), (10, 20, 30)),
+    ])
+    def test_json_round_trip_preserves_the_value(self, spec_factory, value):
+        """JSON turns tuples into lists. If from_json didn't restore the tuple,
+        every reload would re-fingerprint and re-execute the whole graph."""
+        import json
+
+        spec = self._named(spec_factory())
+        raw = json.loads(json.dumps(spec.to_json(value)))
+        assert spec.from_json(raw) == value
+
+    def test_tuple_specs_reject_scalars_and_bad_arity(self):
+        spec = self._named(PointParam("P"))
+        with pytest.raises(ParamError):
+            spec.validate(5)
+        with pytest.raises(ParamError):
+            spec.validate((1, 2, 3))
+        with pytest.raises(ParamError):
+            spec.validate(("a", "b"))
+
+    def test_code_param_is_a_string_param(self):
+        spec = self._named(CodeParam("Script", default="x = 1"))
+        assert spec.validate("y = 2") == "y = 2"
+        assert spec.language == "python"
+        with pytest.raises(ParamError):
+            spec.validate(42)
 
 
 class TestImageBuffer:

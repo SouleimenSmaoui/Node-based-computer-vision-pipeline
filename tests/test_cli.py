@@ -50,6 +50,39 @@ class TestCli:
                      "--set", "blur.kernel=9", "--set", "canny.low=80"])
         assert code == 0
 
+    def test_tuple_param_override(self, tmp_path, capsys):
+        """`--set node.rect=x,y,w,h` — the tuple specs must be reachable from
+        the CLI, not just the inspector."""
+        cv2.imwrite(str(tmp_path / "in.png"), np.asarray(shapes_image(96).data))
+        registry, _ = builtin_registry()
+        g = Graph()
+        g.add_node(registry.get("cvflow.io.load_image"), node_id="load",
+                   params={"path": "in.png"})
+        g.add_node(registry.get("cvflow.geometry.crop_roi"), node_id="crop")
+        g.connect("load", "image", "crop", "image")
+        wf = tmp_path / "crop.cvflow.json"
+        save_workflow(g, wf)
+
+        code = main(["run", str(wf), "--target", "crop",
+                     "--set", "crop.rect=8,8,32,24"])
+        assert code == 0
+        assert "32×24" in capsys.readouterr().out
+
+    def test_bad_tuple_override_is_friendly(self, tmp_path, capsys):
+        cv2.imwrite(str(tmp_path / "in.png"), np.asarray(shapes_image(32).data))
+        registry, _ = builtin_registry()
+        g = Graph()
+        g.add_node(registry.get("cvflow.io.load_image"), node_id="load",
+                   params={"path": "in.png"})
+        g.add_node(registry.get("cvflow.geometry.crop_roi"), node_id="crop")
+        g.connect("load", "image", "crop", "image")
+        wf = tmp_path / "crop.cvflow.json"
+        save_workflow(g, wf)
+
+        code = main(["run", str(wf), "--target", "crop", "--set", "crop.rect=1,2"])
+        assert code == 2
+        assert "x,y,w,h" in capsys.readouterr().err
+
     def test_bad_override_is_friendly(self, demo_workflow, capsys):
         code = main(["run", str(demo_workflow), "--set", "blur.banana=1"])
         assert code == 2

@@ -306,6 +306,85 @@ class TestRotateFlip:
         assert out.space is ColorSpace.BINARY  # rearrangement keeps the mask
 
 
+class TestCropRoi:
+    def test_crops_to_the_rect(self, full_registry):
+        spec = full_registry.get("cvflow.geometry.crop_roi")
+        out = run_node(spec.node_class, inputs={"image": shapes_image(128)},
+                       params={"rect": (10, 20, 40, 30)})["out"]
+        assert (out.width, out.height) == (40, 30)
+
+    def test_zero_extent_means_to_the_edge(self, full_registry):
+        """Keeps the default rect a pass-through instead of a node that
+        silently emits nothing."""
+        spec = full_registry.get("cvflow.geometry.crop_roi")
+        src = shapes_image(64)
+        out = run_node(spec.node_class, inputs={"image": src},
+                       params={"rect": (0, 0, 0, 0)})["out"]
+        assert (out.width, out.height) == (src.width, src.height)
+
+    def test_oversized_rect_is_clipped_not_an_error(self, full_registry):
+        """A fixed ROI must keep working when the input resolution changes."""
+        spec = full_registry.get("cvflow.geometry.crop_roi")
+        out = run_node(spec.node_class, inputs={"image": shapes_image(64)},
+                       params={"rect": (32, 32, 500, 500)})["out"]
+        assert (out.width, out.height) == (32, 32)
+
+    def test_rect_entirely_outside_is_an_error(self, full_registry):
+        spec = full_registry.get("cvflow.geometry.crop_roi")
+        with pytest.raises(NodeExecutionError):
+            run_node(spec.node_class, inputs={"image": shapes_image(64)},
+                     params={"rect": (500, 500, 10, 10)})
+
+    def test_output_is_frozen_even_when_sharing_memory(self, full_registry):
+        """copy=False hands out a view of the input; it must still be frozen,
+        or a downstream node could mutate its own upstream's cached buffer."""
+        spec = full_registry.get("cvflow.geometry.crop_roi")
+        out = run_node(spec.node_class, inputs={"image": shapes_image(64)},
+                       params={"rect": (0, 0, 16, 16), "copy": False})["out"]
+        assert not out.data.flags.writeable
+
+
+class TestFilterContours:
+    def _contours(self, full_registry, min_area=0.0):
+        gray = run_node(full_registry.get("cvflow.color.to_gray").node_class,
+                        inputs={"image": shapes_image(256)})["out"]
+        binary = run_node(full_registry.get("cvflow.threshold.threshold").node_class,
+                          inputs={"image": gray},
+                          params={"method": "otsu"})["out"]
+        return run_node(full_registry.get("cvflow.analysis.find_contours").node_class,
+                        inputs={"image": binary},
+                        params={"min_area": min_area})["contours"]
+
+    def test_area_band_drops_out_of_range_contours(self, full_registry):
+        spec = full_registry.get("cvflow.analysis.filter_contours")
+        source = self._contours(full_registry)
+        assert len(source) > 0
+        areas = sorted(source.areas())
+        cutoff = areas[-1]  # keep only the largest
+
+        out = run_node(spec.node_class, inputs={"contours": source},
+                       params={"area": (cutoff - 1.0, cutoff + 1.0)})["out"]
+        assert 0 < len(out) < len(source) or len(source) == 1
+        assert all(cutoff - 1.0 <= a <= cutoff + 1.0 for a in out.areas())
+
+    def test_invert_returns_the_complement(self, full_registry):
+        spec = full_registry.get("cvflow.analysis.filter_contours")
+        source = self._contours(full_registry)
+        band = {"area": (0.0, sorted(source.areas())[0] + 0.5)}
+        kept = run_node(spec.node_class, inputs={"contours": source},
+                        params=band)["out"]
+        dropped = run_node(spec.node_class, inputs={"contours": source},
+                           params={**band, "invert": True})["out"]
+        assert len(kept) + len(dropped) == len(source)
+
+    def test_ref_size_survives_filtering(self, full_registry):
+        spec = full_registry.get("cvflow.analysis.filter_contours")
+        source = self._contours(full_registry)
+        out = run_node(spec.node_class, inputs={"contours": source},
+                       params={})["out"]
+        assert out.ref_size == source.ref_size
+
+
 class TestCanny:
     def test_outputs_binary_edge_map(self, full_registry):
         spec = full_registry.get("cvflow.edges.canny")

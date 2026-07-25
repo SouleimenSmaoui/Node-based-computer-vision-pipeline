@@ -4,7 +4,7 @@ Every module here imports **`cvflow.sdk` only** (plus cv2/numpy) — the same co
 external plugins live under (principle A5: built-ins aren't special). Files are
 auto-discovered by `cvflow.plugins.loader`; adding a node = dropping a file here.
 
-## Current packs (20 nodes)
+## Current packs (22 nodes)
 
 | Pack | Nodes | Notes |
 |---|---|---|
@@ -14,31 +14,31 @@ auto-discovered by `cvflow.plugins.loader`; adding a node = dropping a file here
 | `edges/` | Canny, **Sobel**, **Laplacian** | typed `Image[GRAY]` input (BGR rejected at connect with hint); Canny's `validate()` enforces low ≤ high. Sobel/Laplacian default to normalized 8-bit; turn `normalize` off for the raw signed float, labelled `ValueRange.ARBITRARY` so viewers auto-scale instead of clipping negatives to black |
 | `threshold/` | Threshold | global / Otsu / adaptive-mean / adaptive-gaussian → `Image[BINARY]`; `validate()` guards adaptive block size |
 | `morphology/` | Morphology | erode/dilate/open/close/gradient/tophat/blackhat × rect/ellipse/cross element; space-preserving |
-| `geometry/` | Resize, **Rotate / Flip** | Resize: scale-factor or absolute w/h; interpolation dropdown. **BINARY inputs are forced to nearest-neighbour** — linear/cubic/area blend neighbours and would emit e.g. 128 under a label promising `{0, 255}`, which `ImageBuffer` does not catch (it validates dtype, not the convention). Keeping the mask a mask also keeps `Find Contours` downstream (CODE_REVIEW §2.8). Rotate / Flip never resamples, so masks and measurements survive exactly; rotation applies before the flip |
-| `analysis/` | Find Contours | binary → `ContourSet` (min-area filter); `BINARY` input satisfies its `GRAY` port via the subtype rule |
+| `geometry/` | Resize, **Rotate / Flip**, **Crop ROI** | Crop ROI takes a `RectParam`; 0 width/height means "to the far edge" (so the default rect is a pass-through, not an empty image) and an oversized rect is clipped rather than an error, so a fixed ROI survives a resolution change. `copy=False` shares memory with the input — still frozen, so nobody can scribble on an upstream cache entry. Resize: scale-factor or absolute w/h; interpolation dropdown. **BINARY inputs are forced to nearest-neighbour** — linear/cubic/area blend neighbours and would emit e.g. 128 under a label promising `{0, 255}`, which `ImageBuffer` does not catch (it validates dtype, not the convention). Keeping the mask a mask also keeps `Find Contours` downstream (CODE_REVIEW §2.8). Rotate / Flip never resamples, so masks and measurements survive exactly; rotation applies before the flip |
+| `analysis/` | Find Contours, **Filter Contours** | Find Contours: binary → `ContourSet` (min-area filter); `BINARY` input satisfies its `GRAY` port via the subtype rule. Filter Contours bands area and aspect (`RangeParam`) with an invert toggle — threshold generously, then reject by *shape*, which is usually what makes a blob pipeline reliable. Both drop the hierarchy when filtering, since its indices refer to the unfiltered tuple |
 | `draw/` | Draw Contours | image + contours → BGR; `−1` thickness fills. In the GUI a geometry output can also render as a crisp vector overlay without this node |
 
 ## MVP target (~35 nodes — docs/08 Phase 1)
 
-**Batch 1 done (20/35).** It was chosen to need *no new infrastructure* — every
-node above uses existing `ParamSpec` types and existing data types, so the whole
-batch is pure SDK work. What remains does not have that property, and splits by
-what it needs first:
+**22/35 done.** Batch 1 was the subset needing no new infrastructure; then the
+five missing `ParamSpec` types were written (core/README), which unblocked Crop
+ROI and Filter Contours immediately. What remains:
 
-**Needs new `ParamSpec` types + inspector widgets** (STATUS.md deviation #5 —
-`RangeParam`, `RectParam`, `PointParam`, `ColorParam`, `CodeParam` are all still
-unwritten): crop-ROI (pick-in-viewer `RectParam`), draw boxes / draw text
-(`ColorParam`), custom Script node (`CodeParam`). Build the param types first —
-they are shared, and the inspector generates their widgets automatically once
-`build_param_widget` knows them.
+**Pure SDK work, nothing blocking:** split/merge channels, warp affine,
+perspective, overlay mask, blend, draw boxes, draw text (`ColorParam` exists
+now), `util/` (switch, math, display text).
 
-**Needs new data types or ports:** connected components, Hough lines/circles,
-template match, bounding boxes, statistics/measurements — these emit things that
-are not images or `ContourSet` (line segments, circles, a detections table), so
-they need the type decisions made before the nodes.
+**Needs new data types first:** connected components, Hough lines/circles,
+template match, bounding boxes, statistics/measurements. These emit things that
+are neither images nor `ContourSet` — line segments, circles, a detections
+table — so decide the types before writing the nodes (`types/geometry.py` says
+the catalog "arrives with the nodes that produce them"; this is that moment).
 
-**Pure SDK work, no blockers:** split/merge channels, warp affine, perspective,
-filter contours, overlay mask, blend, `util/` (switch, math, display text).
+**Needs GUI work, not node work:** pick-in-viewer for `RectParam`/`PointParam`
+is a viewer→inspector gesture, not a node feature — Crop ROI is fully usable
+without it, just typed numerically. The custom Script node has `CodeParam` and
+its editor widget, but must set `cacheable = False` (arbitrary code is not pure)
+and needs a declared-ports UI.
 
 ML pack is Phase 3 (docs/11).
 

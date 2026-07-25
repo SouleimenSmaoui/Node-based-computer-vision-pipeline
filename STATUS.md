@@ -25,7 +25,7 @@ viewer, dependency highlight, structural undo, CI-qt) is listed under Next steps
 
 | Area | State |
 |---|---|
-| Core model | `Graph` (cycle + type checks at connect, replace-on-reconnect, listeners), `NodeInstance`, declarative `Node`/`@node`, ports, params (Int/Float/Bool/Enum/String/Path), `NodeRegistry` |
+| Core model | `Graph` (cycle + type checks at connect, replace-on-reconnect, listeners), `NodeInstance`, declarative `Node`/`@node`, ports, params (Int/Float/Bool/Enum/String/Path + Range/Point/Rect/Color/Code), `NodeRegistry` |
 | Type system | `ImageBuffer` (frozen arrays, BGR-canonical, str or enum spaces), `ColorSpace`, `ContourSet`, port-type checks with auto-coercions (GRAY→BGR replicate, BINARY→GRAY) and reject-with-hint (BGR→GRAY → 'insert "To Gray"') |
 | Engine | `ExecutionService.run()` (blocking), demand closure from observed/armed nodes, BLAKE2b Merkle fingerprints (params + node version + input fps + `external_state` like file mtime), byte-budgeted LRU `OutputCache` with pinning, worker-pool parallel dispatch (workers=0 → inline/deterministic), error isolation (ERROR → descendants BLOCKED, siblings run), side-effect arming, `RunReport`/`NodeMetrics`/EMA |
 | Nodes (20) | **io:** Load Image, Save Image · **color:** To Gray, In Range (→BINARY mask), CLAHE (L-in-LAB for colour) · **filters:** Gaussian Blur, Invert, Median Blur, Box Blur, Bilateral, Unsharp Mask · **edges:** Canny (typed GRAY input + validate low≤high), Sobel, Laplacian (both 8-bit or raw signed float) · **threshold:** Threshold (global/Otsu/adaptive) · **morphology:** Morphology (erode/dilate/open/close/…) · **geometry:** Resize (scale/absolute), Rotate / Flip (lossless) · **analysis:** Find Contours (→ ContourSet, min-area filter) · **draw:** Draw Contours |
@@ -53,9 +53,11 @@ These are *intentional*; if you change one, update the relevant doc.
    semantics arrive with the GUI (Phase 1).
 5. **Not yet created** (planned, see docs): `engine/streaming.py` (Phase 2),
    `cvflow/services/` (session/models — Phase 1/3), `io/migrations/` (first needed at
-   schema v2), placeholder nodes for missing plugins (Phase 1), RangeParam/RectParam/
-   PointParam/ColorParam/CodeParam (Phase 1, with the inspector), user plugins folder
-   + hot reload (Phase 2).
+   schema v2), placeholder nodes for missing plugins (Phase 1), user plugins folder
+   + hot reload (Phase 2). *(RangeParam/RectParam/PointParam/ColorParam/CodeParam
+   were on this list; all five landed 2026-07-25 with their inspector widgets.
+   The pick-in-viewer **gesture** for Rect/Point is still outstanding — that is
+   viewer→inspector wiring, not a param-type gap.)*
 6. **`ImageBuffer` accepts `"GRAY"` strings** as well as `ColorSpace.GRAY` —
    ergonomics addition discovered while writing the first nodes.
 7. **Bespoke `QGraphicsView` node editor instead of NodeGraphQt** (docs/01 §7.3
@@ -104,26 +106,33 @@ These are *intentional*; if you change one, update the relevant doc.
 > compositing/vsync — the CPU path is identical, but re-measure on a real
 > display before declaring the exit criterion met.
 >
-> **Node packs: 11 → 20** (session 4, batch 1). **122 tests** green. While
-> writing them, `GaussianBlur` turned out to carry the identical BINARY-label
-> bug CODE_REVIEW §2.8 found in `Resize` — fixed, and `docs/04 §1` updated with
-> it since that node *is* the reference example every plugin author copies.
+> **Node packs: 11 → 22** (session 4). **152 tests** green. While writing batch
+> 1, `GaussianBlur` turned out to carry the identical BINARY-label bug
+> CODE_REVIEW §2.8 found in `Resize` — fixed, and `docs/04 §1` updated with it
+> since that node *is* the reference example every plugin author copies.
+>
+> **The five missing `ParamSpec` types landed** (was deviation #5): `RangeParam`,
+> `PointParam`, `RectParam`, `ColorParam`, `CodeParam`, each with an inspector
+> widget, CLI `parse()` support and a JSON round-trip that restores the *tuple*
+> — a list would re-fingerprint every node on reload and re-execute whole graphs.
+> `ColorParam` stores BGR so nodes hand it straight to cv2; the RGB swap lives in
+> the widget alone. Crop ROI and Filter Contours were written on top of them the
+> same session, which is what proved the types usable rather than merely present.
 
-1. **Keep broadening node packs toward ~35** — **20 done** (batch 1, session 4:
-   median/box/bilateral/unsharp, Sobel/Laplacian, In Range, CLAHE, Rotate/Flip).
-   Batch 1 was deliberately the subset needing *no new infrastructure*. The rest
-   is **not** all pure SDK work, and splits by what it needs first — see
-   [nodes/README](cvflow/nodes/README.md):
-   - **Write the missing `ParamSpec` types first** (deviation #5: `RangeParam`,
-     `RectParam`, `PointParam`, `ColorParam`, `CodeParam`). They gate crop-ROI,
-     draw boxes/text, and the custom Script node, and they are shared — the
-     inspector generates widgets for them automatically once
-     `build_param_widget` handles them. Highest leverage of anything remaining.
-   - **Then decide the new data types** (line segments, circles, a detections
-     table) which gate connected components, Hough, template match, bounding
-     boxes, statistics.
-   - **No blockers:** split/merge channels, warp affine, perspective, filter
-     contours, overlay mask, blend, `util/` switch/math/display-text.
+1. **Keep broadening node packs toward ~35** — **22 done**, and the five
+   `ParamSpec` types that gated a third of the remainder now exist. Split by
+   what each group still needs (detail in [nodes/README](cvflow/nodes/README.md)):
+   - **No blockers, pure SDK work:** split/merge channels, warp affine,
+     perspective, overlay mask, blend, draw boxes, draw text, `util/`
+     switch/math/display-text. Start here.
+   - **Decide new data types first** — line segments, circles, a detections
+     table. These gate connected components, Hough lines/circles, template
+     match, bounding boxes, statistics. `types/geometry.py` says the catalog
+     "arrives with the nodes that produce them"; this is that moment, and the
+     decision is worth making deliberately rather than one node at a time.
+   - **GUI work, not node work:** pick-in-viewer for `RectParam`/`PointParam`
+     (a viewer→inspector gesture — Crop ROI already works, typed numerically);
+     the custom Script node needs `cacheable = False` and a declared-ports UI.
 2. **Editor + viewer depth** (docs/05 §2.2, §2.4): dependency highlight on
    selection, node bypass (`D`), backdrops/reroutes, heat overlay,
    thumbnails-on-node, **structural undo** (`QUndoCommand`s for

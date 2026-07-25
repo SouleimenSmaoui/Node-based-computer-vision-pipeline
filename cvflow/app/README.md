@@ -26,7 +26,7 @@ Install the GUI dependency (PySide6 only): `pip install -e .[app]`.
 | `latency.py` | `LatencyProbe` — param-to-pixel measurement (docs/08 exit criterion); Qt-free |
 | `controllers/execution_controller.py` | debounced, superseding, threaded client of `ExecutionService` |
 | `viewer/image_view.py` | `ImageView` — zoom/pan/probe, channel/normalize, contour overlay |
-| `inspector/` | auto-generated parameter editors from `ParamSpec`s |
+| `inspector/` | auto-generated parameter editors from `ParamSpec`s — slider/spin/check/combo/path, plus range/point/rect spin groups, a BGR colour swatch, and a monospace code editor |
 | `graphview/` | bespoke `QGraphicsView` node editor (items/scene/view/palette) |
 | `panels/` | console/log, errors, profiler table |
 | `main_window.py` | docking, menus/toolbar, status bar, and all the signal wiring |
