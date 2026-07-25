@@ -280,6 +280,29 @@ repo boundaries add release friction without architectural benefit; the import-r
 (§3) enforces the same discipline. Extras (`pip install cvflow[app]`, `[ml]`, `[camera]`)
 keep the headless core installable on servers without Qt or torch.
 
+### Node-tree status (2026-07-25) — 33 built
+
+Complete: `color/` (+ an extra Merge), `filters/` (+ `invert`), `edges/`, `threshold/`
+(one node covers both listed files), `morphology/`, `geometry/`, `draw/`, `util/`.
+Partial: `io/` 2 of 8 — the rest are Phase-2 sources/sinks; `analysis/` 2 of 8.
+Not built: `analysis/`'s connected components, Hough, template match, measurements and
+statistics — all five blocked on a single type-design decision (they emit line
+segments, circles and a detections table, none of which exist yet), plus `script/`
+(needs `cacheable = False` and a declared-ports UI) and `features/`.
+
+> ⚠ **`features/` (ORB, feature matching) is unresolved scope.** It appears *only* in
+> the tree above — F2's category list, docs/08's Phase-1 scope, and every prose
+> restatement of the node list omit it. So either it was dropped from MVP and this
+> tree is stale, or the prose lists are incomplete; nothing records a decision, and it
+> has never been built. This needs an owner call rather than an assumption.
+> *Recommendation: drop it* — feature matching serves stitching and registration,
+> neither an MVP use case, and it would need a `Keypoints` type plus a matcher type of
+> its own. Tracked in STATUS.md "Open questions".
+
+Note also that **the "~35 nodes" in F2 is a round figure, not a count of this tree**,
+which names ~47 modules — some yielding one node from two files (`threshold/`), others
+two nodes from one (`split_merge.py`).
+
 ---
 
 ## 6. Data-flow architecture

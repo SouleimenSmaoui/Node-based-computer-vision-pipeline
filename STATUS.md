@@ -10,7 +10,8 @@
 - [x] JSON-defined pipeline runs headless via `cvflow run` (demo: load → gray → blur → canny → save)
 - [x] Re-run with one param changed executes only the affected suffix (asserted in `tests/test_engine.py` and `tests/test_benchmark.py`)
 - [x] 1080p gray+blur+canny chain warm budget: **measured 2026-06-12: cold 25.5 ms, warm param change 6–7 ms** (budget < 150 ms in CI gate; interactive target is 100 ms)
-- [x] 80 tests green (`pytest` ~0.7 s + 1080p benchmark)
+- [x] 80 tests green at the time Phase 0 closed (`pytest` ~0.7 s + 1080p benchmark);
+      **184 today**
 
 **Phase 1 — MVP GUI: 🟡 IN PROGRESS — interactive core delivered.** The
 `cvflow-app` GUI runs the full tune loop end-to-end (docs/05 Flow 1): open a
@@ -106,7 +107,7 @@ These are *intentional*; if you change one, update the relevant doc.
 > compositing/vsync — the CPU path is identical, but re-measure on a real
 > display before declaring the exit criterion met.
 >
-> **Node packs: 11 → 33** (session 4, three batches). **183 tests** green.
+> **Node packs: 11 → 33** (session 4, three batches). **184 tests** green.
 > While writing batch 1, `GaussianBlur` turned out to carry the identical
 > BINARY-label bug CODE_REVIEW §2.8 found in `Resize` — fixed, and `docs/04 §1`
 > updated with it since that node *is* the reference example every plugin
@@ -168,6 +169,21 @@ These are *intentional*; if you change one, update the relevant doc.
    (see above); re-confirm on a real display**; save/reopen restores graph +
    viewers exactly.
 
+## Open questions for the owner
+
+- **Is `features/` (ORB, feature matching) in MVP scope?** It appears *only* in the
+  docs/01 §5 folder tree — F2, docs/08's Phase-1 list and every prose restatement of
+  the node list omit it. Nothing records a decision either way, so it has never been
+  built and nothing has been decided. Recommendation: **drop it.** Feature matching
+  serves stitching and registration, neither of which is an MVP use case, and it
+  would need a `Keypoints` type plus a matcher type of its own. Noted inline in
+  docs/01 §5.
+- **Which three past experiments are the dogfood gate?** (docs/08 Phase-1 exit.) This
+  is the one decision that would most improve the remaining plan: the choice
+  determines which of the last nodes actually matter, and turns "build to ~35" into
+  "build what these three need". Asked twice, still open — proceeding on general
+  utility in the meantime, which is the weaker ordering.
+
 ## Known weak spots (honest list)
 
 - `Graph.topo_order` is O(V·E) (rescans edge list); fine at prototype scale, index it
@@ -186,8 +202,11 @@ These are *intentional*; if you change one, update the relevant doc.
   between runs instead of blocking on them.
 - **Per-node queued signals will storm the GUI thread at scale** (CODE_REVIEW
   §2.10): `EngineHooks → ExecutionController` emits `nodeStatus`/`outputsReady`
-  once per node. Fine at 11 nodes; docs/05 §6 (N6) wants batched-per-report
-  badge/metric updates by ~200. Don't fix prematurely — revisit when graphs grow.
+  once per node. Note this scales with the *graph* size, not the registry size —
+  33 node **types** exist, but a real workflow still holds a handful of
+  instances, so nothing has changed here yet. docs/05 §6 (N6) wants
+  batched-per-report badge/metric updates by ~200 instances. Don't fix
+  prematurely — revisit when a real graph gets large.
 - **Port drag-wiring has no automated coverage** (CODE_REVIEW §2.11):
   `PortItem.mousePressEvent → GraphScene.begin_wire/update_wire/finish_wire`.
   Offscreen can't synthesize drags well; the tractable version is a scene-level

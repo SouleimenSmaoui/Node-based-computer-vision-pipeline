@@ -78,6 +78,23 @@ Decisions:
 - **BINARY is a distinct space**, not "GRAY that happens to be 0/255": morphology,
   contours and mask logic *require* binary input, and the type system can now enforce it.
   Coercion BINARY→GRAY is free; GRAY→BINARY requires a Threshold node (lossy, parametric).
+
+  > **Correction (2026-07-25).** "The type system can enforce it" is only half true,
+  > and the half that isn't cost us two real bugs. `ImageBuffer` validates the
+  > *channel count* and the *dtype* of a BINARY image — it does **not** and cannot
+  > cheaply validate the `{0, 255}` **convention**, which would mean scanning every
+  > pixel on every construction. So an operation that blends neighbours (resize,
+  > blur, warp) happily emits 128s still labelled BINARY, and nothing downstream
+  > objects. Found in `Resize` (CODE_REVIEW §2.8) and then in `GaussianBlur` — which
+  > was the reference example in docs/04 §1, so the defect was being copied into
+  > every new node pack.
+  >
+  > The rule, now stated in docs/04 §1 and enforced by node tests: **either constrain
+  > the operation to preserve the convention** (Resize and the warps force
+  > nearest-neighbour on BINARY; rank filters and bitwise ops preserve it for free)
+  > **or emit the space you actually produced** (the averaging filters emit GRAY).
+  > A space's *invariants* are the node author's responsibility; only its *shape* is
+  > the type system's.
 - **Float images** declare their semantic `range` (0..1, 0..255, arbitrary). Viewers use
   it for correct display normalization (with a false-color/auto-gain option for
   arbitrary-range data like gradients), instead of the classic all-white float display bug.

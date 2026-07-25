@@ -4,17 +4,17 @@
 > running computer-vision pipelines as visual node graphs — no per-experiment scripting.
 
 **Status:** Phase 0 (headless foundations) complete, and **Phase 1 GUI interactive
-core delivered** — core model, DAG engine with fingerprint caching, 11 nodes, JSON
+core delivered** — core model, DAG engine with fingerprint caching, **33 nodes**, JSON
 persistence, CLI, and a PySide6 desktop app that runs the live tune loop end to end.
-80 tests green. See [STATUS.md](STATUS.md) for the precise state and next steps, and
-[CLAUDE.md](CLAUDE.md) for the contributor/AI-session guide.
+**184 tests green.** See [STATUS.md](STATUS.md) for the precise state and next steps,
+and [CLAUDE.md](CLAUDE.md) for the contributor/AI-session guide.
 
 ## Quick start
 
 ```powershell
 python -m venv .venv
 .venv\Scripts\python.exe -m pip install -e ".[app,dev]"  # app = PySide6 GUI
-.venv\Scripts\python.exe -m pytest                       # 80 tests, ~1 s
+.venv\Scripts\python.exe -m pytest                       # 184 tests, ~2 s
 .venv\Scripts\python.exe examples\make_demo.py           # generate demo workflow
 
 # GUI: open the demo, then drag a slider and watch only the affected suffix rerun
@@ -25,8 +25,19 @@ python -m venv .venv
 .venv\Scripts\cvflow.exe run examples\workflows\edges_demo.cvflow.json --set blur.kernel=9 --set canny.low=80
 ```
 
-Measured on the dev machine (2026-06-12): cold 5-node 1080p run 25 ms; warm
-param change re-executes only the affected suffix in ~6 ms.
+## Measured, not estimated
+
+| Metric | Result | Budget |
+|---|---|---|
+| **Param-to-pixel p95**, 1080p, through the real GUI | **48 ms** (p50 38, max 53) | 100 ms |
+| Warm param change, engine only, 1080p | ~6 ms | 150 ms (CI gate) |
+| Cold 5-node 1080p run | 25 ms | — |
+
+Param-to-pixel is timed on the GUI thread at both ends — inspector edit to viewer
+pixmap — so the 30 ms debounce, queued signal delivery and repaint are all *inside*
+the number, not excluded from it. Roughly 2× headroom against the docs/08 exit
+criterion. Measured offscreen (2026-07-25); the CPU path is identical to a real
+display, but compositing and vsync are not included.
 
 ---
 
@@ -53,6 +64,7 @@ Core promises:
 
 1. **Param-to-pixel latency under ~100 ms** for typical pipelines on 1080p images —
    tuning a slider feels like adjusting a physical knob, not re-running a script.
+   *Currently measured at 48 ms p95 (see above).*
 2. **Incremental execution** — changing one parameter re-runs only the affected
    downstream nodes; everything upstream is served from cache.
 3. **Inspect anything** — every node's output can be opened in a viewer, compared
@@ -61,6 +73,26 @@ Core promises:
    plugins folder or pip packages; built-in nodes use the exact same API.
 5. **Headless core** — the same workflow JSON runs from the GUI, a CLI, or (later) a
    server, because the engine has zero GUI dependencies.
+
+## Node catalogue (33 of the ~35 MVP target)
+
+| Pack | Nodes |
+|---|---|
+| **Input / Output** | Load Image, Save Image |
+| **Color** | To Gray, In Range, CLAHE, Split Channels, Merge Channels |
+| **Filtering** | Gaussian Blur, Box Blur, Median Blur, Bilateral Filter, Unsharp Mask, Invert |
+| **Edges** | Canny, Sobel, Laplacian |
+| **Threshold** | Threshold (global / Otsu / adaptive) |
+| **Morphology** | Morphology (erode / dilate / open / close / gradient / tophat / blackhat) |
+| **Geometry** | Resize, Crop ROI, Rotate / Flip, Warp Affine, Perspective Warp |
+| **Analysis** | Find Contours, Filter Contours |
+| **Draw** | Draw Contours, Draw Boxes, Draw Text, Overlay Mask, Blend |
+| **Misc** | Switch, Math Op, Display Text |
+
+`cvflow nodes list` prints the live registry. Still to come: connected components,
+Hough lines/circles, template match, bounding boxes, statistics — all five blocked on
+one design decision (a shared detections/geometry type), not on effort. See
+[cvflow/nodes/README.md](cvflow/nodes/README.md).
 
 ## Technology stack (summary)
 

@@ -60,6 +60,23 @@ each must be faster end-to-end than the script version, param-to-pixel p95 < 100
 1080p; save/reopen restores graph + viewers exactly; kill -9 during edit loses < 60 s of
 work.
 
+> **Progress (2026-07-25).** Node count is **33 of ~35**; the five outstanding
+> (connected components, Hough lines/circles, template match, bounding boxes,
+> statistics) are blocked on one type-design decision, not on effort — see
+> `cvflow/nodes/README.md`.
+>
+> **Param-to-pixel is now measured rather than estimated: p50 38 ms, p95 48 ms,
+> max 53 ms at 1080p**, against the 100 ms budget above. `cvflow/app/latency.py`
+> times inspector-edit → viewer-pixmap with both ends on the GUI thread, so the
+> 30 ms debounce, queued signal delivery and repaint are *inside* the number —
+> engine timings alone would have flattered it. Caveat: measured offscreen, so
+> compositing and vsync are excluded; re-confirm on a real display before ticking
+> this criterion.
+>
+> Still open on this gate: the three dogfood rebuilds (the choice of experiments
+> should drive which remaining nodes get built first), viewer-state restore on
+> open, and kill -9 recovery.
+
 ## Phase 2 — Beta: streams, batch, polish (weeks 11–18)
 
 - StreamExecutor: webcam + video-file live mode + RTSP (PyAV); FPS/drop HUD; stateful-node

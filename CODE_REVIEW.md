@@ -1,5 +1,12 @@
 # CODE_REVIEW.md — actionable review findings (2026-07-08)
 
+> ## ✅ CLOSED 2026-07-25 — every item fixed or explicitly triaged.
+> See the "Definition of done" checklist at the bottom for what happened to each.
+> **Counts and file:line references below are as-of the review (80 tests, 11 nodes)
+> and are kept unchanged as a historical record** — the tree has moved on
+> considerably since (184 tests, 33 nodes). Read STATUS.md for the current state;
+> read this for the reasoning behind a set of invariants the code now depends on.
+
 > **Audience:** an AI (or human) session tasked with fixing these findings.
 > **Scope reviewed:** Phase 0 core/engine + Phase 1 GUI (`cvflow/app/`) + node packs, at 80 tests green.
 >

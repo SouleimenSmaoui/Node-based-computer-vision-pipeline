@@ -84,6 +84,14 @@ Design decisions:
 - **Stable string ids** (`n1`, `n7`) not array indices → minimal, reviewable git diffs
   (moving a node changes one `pos` line; adding a node doesn't renumber the file).
   Numbers are rounded (positions 1 decimal, params as-authored) to avoid diff noise.
+- **A param's `from_json` must reconstruct its exact in-memory value, not merely an
+  equal-looking one** (added 2026-07-25, when the tuple params landed). JSON has no
+  tuple type, so `(8, 8, 32, 24)` is written as an array and naively read back as a
+  *list*. That is not cosmetic: params are hashed into every node's fingerprint
+  (docs/02 §3.1), so a type change on load makes every fingerprint miss and reopening
+  a workflow re-executes the entire graph instead of restoring it from cache. Any new
+  `ParamSpec` whose value is not a JSON primitive needs a `from_json` that restores
+  the type, and a round-trip test asserting equality *and* type.
 - **`ui` is a sibling of `graph`, not mixed into it** — the engine/CLI consumes `graph`
   alone; the GUI additionally restores `ui` (open viewers, overlays, zoom). Headless
   execution provably needs no UI data (principle A1). It still lives in the *same file*

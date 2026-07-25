@@ -84,6 +84,23 @@ same inputs), provided nodes are pure — which the immutability contract (docs/
 and the `side_effect`/`stateful` flags make explicit. Nondeterministic nodes declare
 `cacheable = False`.
 
+> **Params-snapshot invariant (added 2026-07-25, CODE_REVIEW §1.1).** "Same params"
+> above is doing more work than it looks. `canonical(params)` and the node's actual
+> execution are two *separate reads* of `NodeInstance.params`, and the GUI mutates
+> params from another thread without the run-lock — deliberately, so slider drags
+> stay responsive. An edit landing between the two reads makes the node execute with
+> the new value while its output is cached under the old value's fingerprint. The
+> immediate rerun looks correct (new fingerprint → miss), and the damage only
+> surfaces later, when the user returns to the old value and the poisoned entry
+> *hits*: a wrong image, displayed persistently, with no error anywhere.
+>
+> So the engine takes **one snapshot of a node's params per run**, in `dispatch()`,
+> and threads that same dict through config validation, the fingerprint, and
+> execution. Nothing downstream of dispatch may re-read `inst.params`. This is what
+> makes "equal fingerprints ⇒ equal results" true in the presence of a live GUI, and
+> it generalizes: any future value the fingerprint covers must be read once per run,
+> not once per consumer.
+
 ### 3.2 The cache
 
 - `OutputCache`: map `fingerprint → tuple(outputs)`, LRU ordered, **byte-accounted**

@@ -36,7 +36,7 @@ GUI tests run headless: `pytest` includes `tests/test_app_smoke.py`, which sets
 | `cvflow/plugins/` | node discovery (builtin scan + pip entry points) | [README](cvflow/plugins/README.md) |
 | `cvflow/cli/` | `cvflow` command (run / validate / nodes list) | [README](cvflow/cli/README.md) |
 | `cvflow/app/` | **Phase 1 PySide6 GUI** (bespoke editor, PySide6-only) | [README](cvflow/app/README.md) · docs/05 |
-| `tests/` | 183 tests incl. offscreen GUI smoke + 1080p engine and param-to-pixel gates | [README](tests/README.md) |
+| `tests/` | 184 tests incl. offscreen GUI smoke + 1080p engine and param-to-pixel gates | [README](tests/README.md) |
 | `examples/` | demo workflow + programmatic graph-building reference | [README](examples/README.md) |
 
 ## Hard rules (break these and the architecture rots)

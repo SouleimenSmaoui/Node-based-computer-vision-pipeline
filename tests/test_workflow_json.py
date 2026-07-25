@@ -41,6 +41,35 @@ class TestRoundtrip:
         assert result.base_dir == str(saved.parent)
 
 
+class TestTupleParamPersistence:
+    def test_tuple_params_reload_as_tuples_not_lists(self, tmp_path):
+        """JSON has no tuple type. If a reloaded rect came back as a list, its
+        fingerprint would differ from the in-memory one — so reopening a
+        workflow would re-execute the whole graph instead of restoring it from
+        cache. Type identity here is a performance contract, not pedantry."""
+        from cvflow.core.graph import Graph
+        from cvflow.engine.cache import node_fingerprint
+        from cvflow.plugins import builtin_registry
+
+        full, _ = builtin_registry()
+        g = Graph()
+        g.add_node(full.get("cvflow.io.load_image"), node_id="load",
+                   params={"path": "in.png"})
+        g.add_node(full.get("cvflow.geometry.crop_roi"), node_id="crop",
+                   params={"rect": (8, 8, 32, 24)})
+        g.connect("load", "image", "crop", "image")
+
+        path = tmp_path / "roi.cvflow.json"
+        save_workflow(g, path)
+        before = node_fingerprint(g.nodes["crop"], [], None)
+
+        reloaded = load_workflow(path, full).graph
+        value = reloaded.nodes["crop"].params["rect"]
+        assert value == (8, 8, 32, 24)
+        assert isinstance(value, tuple), "reloaded as a list — fingerprints will miss"
+        assert node_fingerprint(reloaded.nodes["crop"], [], None) == before
+
+
 class TestRobustLoading:
     def test_unknown_node_type_raises_helpful_error(self, saved, registry):
         doc = json.loads(saved.read_text(encoding="utf-8"))

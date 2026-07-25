@@ -77,6 +77,23 @@ follow the debounced-run pipeline (docs/02 §4); slider press/release brackets o
 macro. Multi-select shows shared parameters (batch edit). `visible_if` rules show/hide
 dependent params dynamically.
 
+> **Build note (2026-07-25).** All five tuple/colour/code editors exist and are
+> generated automatically; dispatch is by spec *type*, never by `widget_hint` (a
+> hint-keyed table sent a non-`IntParam` to the int editor and crashed it —
+> CODE_REVIEW §2.7). Two deviations from the description above, both deliberate:
+>
+> - **Range/point/rect are labelled spin-box groups, not a two-handle slider or an
+>   armed viewer picker.** Qt ships no two-handle slider, and the GUI is PySide6-only
+>   (STATUS.md deviation #7), so a range slider means writing one. **Pick-in-viewer
+>   is a viewer→inspector gesture, not a param-type feature** — Crop ROI and
+>   Perspective Warp are fully usable typed numerically, so this is UX polish rather
+>   than a blocker (Flow 4 above is still the target).
+> - **`ColorParam` values are BGR**, matching OpenCV so nodes pass them straight to
+>   `cv2.rectangle`. Qt is RGB; that swap lives in the swatch widget alone.
+>
+> Not yet built: multi-select batch edit, `visible_if`, and the undo macro bracketing
+> a slider gesture (undo currently coalesces per gesture but is not a formal macro).
+
 ### 2.4 Viewers (the product's soul)
 
 `QGraphicsView`-based canvas with an OpenGL viewport; the displayed `ImageBuffer` is
