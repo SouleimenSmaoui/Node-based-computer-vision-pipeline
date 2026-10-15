@@ -9,6 +9,14 @@ persistence, CLI, and a PySide6 desktop app that runs the live tune loop end to 
 **184 tests green.** See [STATUS.md](STATUS.md) for the precise state and next steps,
 and [CLAUDE.md](CLAUDE.md) for the contributor/AI-session guide.
 
+## See CVFlow in action
+
+![CVFlow's desktop editor showing a connected computer-vision pipeline, node palette, parameter inspector, image viewers, and execution log](docs/images/cvflow-pipeline.png)
+
+This example loads an image, enhances it with CLAHE, creates a mask with Threshold,
+then combines the image and mask with Overlay Mask before saving the result. Select a
+node to tune its parameters and inspect its output in the viewers.
+
 ## Quick start
 
 ```powershell
