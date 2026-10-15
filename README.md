@@ -17,6 +17,19 @@ This example loads an image, enhances it with CLAHE, creates a mask with Thresho
 then combines the image and mask with Overlay Mask before saving the result. Select a
 node to tune its parameters and inspect its output in the viewers.
 
+### Build a pipeline
+
+![CVFlow's node palette beside a connected image-processing graph](docs/images/cvflow-pipeline2.png)
+
+Drag nodes from the palette and connect image and mask ports to build a reusable workflow.
+
+### Tune and inspect outputs
+
+![CVFlow's Inspector showing CLAHE controls above two image viewers](docs/images/cvflow-pipeline3.png)
+
+The Inspector exposes CLAHE's clip limit and tile grid, while the viewers show node
+outputs and support side-by-side comparison.
+
 ## Quick start
 
 ```powershell
